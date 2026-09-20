@@ -6,21 +6,15 @@ ENV PYTHONPATH=/app/src
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN pip install --no-cache-dir poetry
 
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml ./
 
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-root --only main
 
 COPY . .
 
-RUN chmod +x entrypoint.sh
+EXPOSE 8001
 
-EXPOSE 5000
-
-ENTRYPOINT ["./entrypoint.sh"]
+CMD ["uvicorn", "arm_voip.app:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -34,7 +34,11 @@ class Call(db.Model):
         nullable=False,
         default=CallChannel.TEXT,
     )
-    sip_call_id = db.Column(db.String(128))
+    sip_call_id = db.Column(db.String(128), unique=True, index=True)
+    asterisk_channel = db.Column(
+        db.String(256),
+        index=True,
+    )
     caller_number = db.Column(db.String(32))
     status = db.Column(
         db.Enum(CallStatus, name="call_status", native_enum=True),

@@ -1,4 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 
-# экземпляр ORM для работы с БД
 db = SQLAlchemy()
+
+migrate = Migrate()

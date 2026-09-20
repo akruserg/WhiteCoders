@@ -1,20 +1,26 @@
 [project]
-name = "arm-112-api"
+name = "arm-api"
 version = "1.0.0"
-description = ""
+description = "REST-API для учебного ПО ARM-112"
 authors = [
     {name = "Vladimir Goncharuk",email = "romanngurev07@gmail.com"}
 ]
 readme = ""
-requires-python = ">=3.14"
+requires-python = ">=3.14,<4"
 dependencies = [
     "flask (>=3.1.3,<4.0.0)",
     "gunicorn (>=26.2.0,<27.0.0)",
     "flask-sqlalchemy (>=3.1.1,<4.0.0)",
+    "pyjwt (>=2.14.0,<3.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)",
+    "reportlab (>=5.0.1,<6.0.0)",
+    "psycopg2-binary (>=2.9.13,<3.0.0)",
+    "flask-migrate (>=4.1.0,<5.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
 ]
 
 [tool.poetry]
-packages = [{include = "api", from = "src"}]
+packages = [{include = "arm_api", from = "src"}]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

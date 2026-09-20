@@ -3,7 +3,6 @@ from .mixins import utcnow
 
 
 class Material(db.Model):
-
     __tablename__ = "materials"
 
     id = db.Column(

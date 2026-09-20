@@ -19,7 +19,6 @@ user_service_scope = db.Table(
 
 
 class IncidentCategory(db.Model):
-
     __tablename__ = "incident_categories"
 
     id = db.Column(db.Integer, primary_key=True)
