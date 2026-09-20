@@ -14,12 +14,16 @@ GET  /system/voip              - состояние VoIP (Asterisk)
 POST /system/services/{name}/{action} - запуск/остановка сервисов
 """
 
+import json
 import os
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, current_app, request
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+from flask import Blueprint, Response, current_app, request
 from sqlalchemy import func, select, text
+from xml.etree import ElementTree as ET  # только сборка; разбор чужого XML - defusedxml
 
 from ..core.errors import ApiError
 from ..core.extensions import db
@@ -39,13 +43,21 @@ from ..models import (
     SessionStatus,
 )
 from ..schemas import AlertActionIn, BackupCreateIn, SettingUpdateIn
-from ..services import ai, integrations, reporting
+from ..services import ai, integrations, reporting, settings
 from ..services.backup import run_backup
 from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
 system_bp = Blueprint("system", __name__)
 
 MANAGED_SERVICES = ("api", "voip", "ai", "scheduler")
+
+# сервис -> (ключ настройки-выключателя, область, описание)
+SERVICE_SWITCHES = {
+    "voip": ("voip.enabled", SettingScope.VOIP, "Принудительно включить или выключить VoIP-звонки"),
+    "ai": ("ai.enabled", SettingScope.AI, "Включить ИИ-модуль (генерация сценариев, инсайты)"),
+    "scheduler": ("backup.enabled", SettingScope.BACKUP, "Ежедневное резервное копирование и очистка журнала"),
+}  # fmt: skip
+MAX_SETTINGS_XML_BYTES = 1_000_000
 
 
 def _db_state():
@@ -174,6 +186,86 @@ def list_settings():
             "total": len(rows),
         }
     )
+
+
+@system_bp.get("/system/settings/export.xml")
+def export_settings_xml():
+    """Настройки системы одним XML-файлом (конфигурация по ТЗ). Секреты не выгружаются."""
+    require("system.manage", "system.monitor")
+    root = ET.Element("settings", version="1")
+    rows = db.session.execute(
+        select(SystemSetting)
+        .where(SystemSetting.is_secret.is_(False))
+        .order_by(SystemSetting.key)
+    ).scalars()
+    for row in rows:
+        node = ET.SubElement(root, "setting", key=row.key, scope=row.scope.value)
+        node.text = json.dumps(row.value, ensure_ascii=False)
+    xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return Response(
+        xml,
+        mimetype="application/xml",
+        headers={"Content-Disposition": 'attachment; filename="arm112-settings.xml"'},
+    )
+
+
+def _parse_settings_xml(raw):
+    if not raw or len(raw) > MAX_SETTINGS_XML_BYTES:
+        raise ApiError("Ожидается XML размером до 1 МБ", 422)
+    try:
+        root = SafeET.fromstring(raw)  # защищает от XXE и «миллиарда смеющихся»
+    except (SafeET.ParseError, DefusedXmlException) as exc:
+        raise ApiError("Некорректный XML", 422, details={"error": str(exc)[:200]})
+    if root.tag != "settings":
+        raise ApiError("Корневой элемент должен быть <settings>", 422)
+    return root
+
+
+def _settings_updates(root, known):
+    """Разбирает <setting> в {ключ: значение}. Возвращает (правки, ошибки)."""
+    updates, errors = {}, {}
+    for node in root.findall("setting"):
+        key = node.get("key", "")
+        setting = known.get(key)
+        if setting is None:
+            errors[key or "?"] = "неизвестная настройка"
+        elif setting.is_secret:
+            errors[key] = "секретные настройки через XML не меняются"
+        elif node.get("scope") not in (None, setting.scope.value):
+            errors[key] = f"область должна быть {setting.scope.value}"
+        else:
+            try:
+                updates[key] = json.loads(node.text or "")
+            except ValueError:
+                errors[key] = "значение должно быть JSON"
+    return updates, errors
+
+
+@system_bp.post("/system/settings/import")
+def import_settings_xml():
+    """Загружает настройки из XML (см. export.xml). Применяется целиком или никак."""
+    principal = require("system.manage")
+    root = _parse_settings_xml(request.get_data())
+
+    known = {s.key: s for s in db.session.execute(select(SystemSetting)).scalars()}
+    updates, errors = _settings_updates(root, known)
+    if errors:
+        raise ApiError("XML не применен", 422, details=errors)
+
+    changed = []
+    for key, value in updates.items():
+        setting = known[key]
+        if setting.value != value:
+            changed.append(key)
+            setting.value = value
+            setting.updated_by = principal.id
+            setting.updated_at = datetime.now(timezone.utc)
+    write_audit(
+        db.session, request, principal, "settings.import", "system_setting", None,
+        {"changed": changed},
+    )  # fmt: skip
+    commit()
+    return ok({"changed": changed, "unchanged": len(updates) - len(changed)})
 
 
 @system_bp.put("/system/settings/<path:key>")
@@ -335,19 +427,43 @@ def voip_status():
     return ok(integrations.voip_health())
 
 
-def _set_voip_enabled(principal, enabled):
-    """Включатель VoIP хранится в БД, чтобы его видели все воркеры API."""
-    setting = db.session.get(SystemSetting, integrations.VOIP_SETTING_KEY)
+def _set_switch(principal, service, enabled):
+    """Выключатель сервиса хранится в БД, чтобы его видели все воркеры API."""
+    key, scope, description = SERVICE_SWITCHES[service]
+    setting = db.session.get(SystemSetting, key)
     if setting is None:
         setting = SystemSetting(
-            key=integrations.VOIP_SETTING_KEY,
-            scope=SettingScope.VOIP,
-            description="Принудительно включить или выключить VoIP-звонки",
-            default_value=current_app.config["VOIP_ENABLED"],
+            key=key,
+            scope=scope,
+            description=description,
+            default_value=enabled,
         )
         db.session.add(setting)
     setting.value = enabled
     setting.updated_by = principal.id
+
+
+@system_bp.get("/system/services")
+def list_services():
+    require("system.manage", "system.monitor")
+    return ok(
+        {
+            "items": [
+                {"name": "api", "enabled": True, "controllable": False},
+                {
+                    "name": "voip",
+                    "enabled": integrations.voip_available(),
+                    "controllable": True,
+                },
+                {"name": "ai", "enabled": ai.is_enabled(), "controllable": True},
+                {
+                    "name": "scheduler",
+                    "enabled": bool(settings.get("backup.enabled", True)),
+                    "controllable": True,
+                },
+            ]
+        }
+    )
 
 
 @system_bp.post("/system/services/<service>/<action>")
@@ -363,17 +479,12 @@ def manage_service(service, action):
             409,
         )
 
-    if service != "voip":
-        raise ApiError(
-            f"Сервисом «{service}» управляет оркестратор (docker compose), "
-            "из API он не запускается и не останавливается",
-            501,
-            code="not_implemented",
-        )
-
     enabled = action != "stop"
-    _set_voip_enabled(principal, enabled)
-    details = {"voip_enabled": enabled, "available": integrations.voip_available()}
+    _set_switch(principal, service, enabled)
+    # Это логическое включение и выключение: процессы (контейнеры) остаются
+    # в работе, но сервис перестает принимать задания. Контейнеры перезапускает
+    # оркестратор (docker compose).
+    details = {"service": service, "enabled": enabled}
 
     db.session.add(
         SystemEvent(

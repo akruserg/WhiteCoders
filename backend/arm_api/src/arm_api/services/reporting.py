@@ -87,16 +87,35 @@ def available_formats():
     return formats
 
 
+class Namer:
+    """Подставляет вместо ФИО «Обучающийся N», если отчет нужно обезличить
+    (params.anonymize = true). Нумерация одинакова внутри одного отчета."""
+
+    def __init__(self, anonymize=False):
+        self.anonymize = bool(anonymize)
+        self._numbers = {}
+
+    def name(self, user_id, full_name):
+        if not self.anonymize:
+            return full_name
+        number = self._numbers.setdefault(str(user_id), len(self._numbers) + 1)
+        return f"Обучающийся {number}"
+
+    def login(self, user_id, username):
+        return self.name(user_id, username) if self.anonymize else username
+
+
 def build(kind, session_id=None, params=None):
     params = params or {}
     kind = ReportKind(kind) if not isinstance(kind, ReportKind) else kind
+    namer = Namer(params.get("anonymize"))
 
     if kind is ReportKind.SESSION:
-        return _session_report(session_id)
+        return _session_report(session_id, namer)
     if kind is ReportKind.STUDENT_PROGRESS:
-        return _student_report(params.get("user_id"), session_id)
+        return _student_report(params.get("user_id"), session_id, namer)
     if kind is ReportKind.GROUP_PROGRESS:
-        return _group_report(params.get("group_id"))
+        return _group_report(params.get("group_id"), namer)
     if kind is ReportKind.ERROR_HEATMAP:
         data = analytics.error_heatmap(
             session_id=session_id,
@@ -117,12 +136,14 @@ def build(kind, session_id=None, params=None):
     raise ValueError(f"Неизвестный вид отчета: {kind}")
 
 
-def _session_report(session_id):
+def _session_report(session_id, namer):
     session = db.session.get(TrainingSession, session_id)
     if session is None:
         raise ValueError("Занятие не найдено")
 
     results = analytics.session_results(session.id)
+    for student in results["students"]:
+        student["full_name"] = namer.name(student["user_id"], student["full_name"])
     attempts = list(
         db.session.execute(
             select(Attempt)
@@ -143,7 +164,7 @@ def _session_report(session_id):
         details.append(
             {
                 "attempt_id": str(attempt.id),
-                "user": user.full_name if user else None,
+                "user": namer.name(user.id, user.full_name) if user else None,
                 "seq": attempt.seq,
                 "scenario": scenario.title if scenario else None,
                 "score": attempt.final_score,
@@ -195,35 +216,38 @@ def _session_report(session_id):
     return f"Отчет о практическом занятии: {session.title}", data, rows
 
 
-def _student_report(user_id, session_id=None):
+def _student_report(user_id, session_id=None, namer=None):
     user = db.session.get(User, user_id) if user_id else None
     if user is None:
         raise ValueError("Обучающийся не найден")
+    namer = namer or Namer()
+    shown = namer.name(user.id, user.full_name)
     data = analytics.user_progress(user.id, session_id)
     data["user"] = {
-        "id": str(user.id),
-        "full_name": user.full_name,
-        "username": user.username,
+        "id": str(user.id) if not namer.anonymize else None,
+        "full_name": shown,
+        "username": namer.login(user.id, user.username),
     }
     rows = [["Занятие", "Дата", "Карточек", "Средний балл"]]
     rows += [
         [i["title"], i["started_at"], i["attempts"], i["avg_score"]]
         for i in data["timeline"]
     ]
-    return f"Прогресс обучающегося: {user.full_name}", data, rows
+    return f"Прогресс обучающегося: {shown}", data, rows
 
 
-def _group_report(group_id):
+def _group_report(group_id, namer=None):
     group = db.session.get(Group, group_id) if group_id else None
     if group is None:
         raise ValueError("Группа не найдена")
+    namer = namer or Namer()
     students = []
     for member in group.members:
         progress = analytics.user_progress(member.id)
         students.append(
             {
-                "user_id": str(member.id),
-                "full_name": member.full_name,
+                "user_id": str(member.id) if not namer.anonymize else None,
+                "full_name": namer.name(member.id, member.full_name),
                 **progress["summary"],
             }
         )

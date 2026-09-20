@@ -11,6 +11,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from flask import current_app
 from sqlalchemy import select
 
 from ..core.extensions import db
@@ -147,21 +148,42 @@ def seed_grading_profile():
     return profile
 
 
+# Настройки, у которых есть переменная окружения. Пока администратор не менял
+# значение через API, оно берется из окружения, поэтому правка .env и перезапуск
+# действуют. После правки в админке или XML приоритет у БД.
+ENV_BACKED = {
+    "voip.enabled": "VOIP_ENABLED",
+    "voip.max_latency_ms": "VOIP_MAX_LATENCY_MS",
+    "backup.keep_count": "BACKUPS_KEEP",
+    "audit.retention_days": "AUDIT_RETENTION_DAYS",
+    "ai.enabled": "AI_ENABLED",
+    "ai.scoring_enabled": "AI_SCORING_ENABLED",
+    "security.max_failed_logins": "MAX_FAILED_LOGINS",
+}
+
+
 def seed_settings():
-    have = set(db.session.execute(select(SystemSetting.key)).scalars())
+    config = current_app.config
+    have = {s.key: s for s in db.session.execute(select(SystemSetting)).scalars()}
     for key, scope, value, description, secret, restart in card_schema.DEFAULT_SETTINGS:
-        if key not in have:
-            db.session.add(
-                SystemSetting(
-                    key=key,
-                    scope=SettingScope(scope),
-                    value=value,
-                    default_value=value,
-                    description=description,
-                    is_secret=secret,
-                    requires_restart=restart,
-                )
+        if key in ENV_BACKED:
+            value = config[ENV_BACKED[key]]
+        existing = have.get(key)
+        if existing is not None:
+            if key in ENV_BACKED and existing.updated_by is None:
+                existing.value = value
+            continue
+        db.session.add(
+            SystemSetting(
+                key=key,
+                scope=SettingScope(scope),
+                value=value,
+                default_value=value,
+                description=description,
+                is_secret=secret,
+                requires_restart=restart,
             )
+        )
     db.session.commit()
 
 

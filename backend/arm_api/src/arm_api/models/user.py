@@ -17,6 +17,8 @@ class User(db.Model):
     role_id = db.Column(db.SmallInteger, db.ForeignKey("roles.id"), nullable=False)
     mfa_enabled = db.Column(db.Boolean, nullable=False, default=False)
     mfa_secret = db.Column(db.String(64))
+    pd_consent_at = db.Column(db.DateTime(timezone=True))
+    anonymized_at = db.Column(db.DateTime(timezone=True))
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     is_blocked = db.Column(db.Boolean, nullable=False, default=False)
     failed_attempts = db.Column(db.SmallInteger, nullable=False, default=0)
@@ -97,6 +99,12 @@ class User(db.Model):
             "mfa_enabled": self.mfa_enabled,
             "is_active": self.is_active,
             "is_blocked": self.is_blocked,
+            "pd_consent_at": (
+                self.pd_consent_at.isoformat() if self.pd_consent_at else None
+            ),
+            "anonymized_at": (
+                self.anonymized_at.isoformat() if self.anonymized_at else None
+            ),
             "failed_attempts": self.failed_attempts,
             "last_login_at": (
                 self.last_login_at.isoformat() if self.last_login_at else None

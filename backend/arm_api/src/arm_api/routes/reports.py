@@ -18,7 +18,7 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, request, send_file
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..core.errors import ApiError
 from ..core.extensions import db
@@ -57,6 +57,28 @@ def report_formats():
     return ok({"formats": reporting.available_formats()})
 
 
+def _check_report_scope(principal, payload):
+    """Преподаватель строит отчеты только по своим занятиям и группам."""
+    if is_admin(principal):
+        return
+    params = payload.params or {}
+    if payload.session_id:
+        session = get_or_404(TrainingSession, payload.session_id, "Занятие")
+        if session.teacher_id != principal.id:
+            raise ApiError("Занятие другого преподавателя", 403)
+    if params.get("group_id"):
+        group = get_or_404(Group, params["group_id"], "Группа")
+        if group.teacher_id != principal.id:
+            raise ApiError("Группа другого преподавателя", 403)
+
+
+def _can_see_report(principal, report):
+    if report.created_by == principal.id:
+        return True
+    # админ видит чужие только системные отчеты, без данных обучающихся
+    return is_admin(principal) and report.kind.value in ADMIN_REPORT_KINDS
+
+
 @reports_bp.post("/reports")
 def create_report():
     principal = require("report.create", "report.read.any")
@@ -67,6 +89,7 @@ def create_report():
             403,
             details={"allowed": sorted(ADMIN_REPORT_KINDS)},
         )
+    _check_report_scope(principal, payload)
 
     if payload.format not in reporting.available_formats():
         raise ApiError(
@@ -146,7 +169,12 @@ def create_report():
 def list_reports():
     principal = require("report.create", "report.read.any")
     stmt = select(Report).order_by(Report.created_at.desc())
-    if not is_admin(principal):
+    if is_admin(principal):  # чужие отчеты админу видны только системные
+        system_kinds = [ReportKind(k) for k in ADMIN_REPORT_KINDS]
+        stmt = stmt.where(
+            or_(Report.created_by == principal.id, Report.kind.in_(system_kinds))
+        )
+    else:
         stmt = stmt.where(Report.created_by == principal.id)
     if request.args.get("kind"):
         try:
@@ -162,7 +190,7 @@ def list_reports():
 def get_report(report_id):
     principal = require("report.create", "report.read.any")
     report = get_or_404(Report, report_id, "Отчет")
-    if not is_admin(principal) and report.created_by != principal.id:
+    if not _can_see_report(principal, report):
         raise ApiError("Отчет другого пользователя", 403)
     return item(report)
 
@@ -171,7 +199,7 @@ def get_report(report_id):
 def download_report(report_id):
     principal = require("report.create", "report.read.any")
     report = get_or_404(Report, report_id, "Отчет")
-    if not is_admin(principal) and report.created_by != principal.id:
+    if not _can_see_report(principal, report):
         raise ApiError("Отчет другого пользователя", 403)
     if report.status is not ReportStatus.READY or not report.file_path:
         raise ApiError("Отчет еще не готов", 409)
@@ -202,45 +230,57 @@ def session_report(session_id):
     return ok({"title": title, "data": data, "table": rows})
 
 
+def _insight_filters(principal, payload):
+    """Условия выборки ошибок для инсайта. Преподаватель - только свои занятия и группы."""
+    where = []
+    if payload.session_id:
+        session = get_or_404(TrainingSession, payload.session_id, "Занятие")
+        if not is_admin(principal) and session.teacher_id != principal.id:
+            raise ApiError("Занятие другого преподавателя", 403)
+        where.append(Attempt.session_id == payload.session_id)
+    if payload.target_user_id:
+        where.append(Attempt.user_id == payload.target_user_id)
+    if payload.target_group_id:
+        group = get_or_404(Group, payload.target_group_id, "Группа")
+        if not is_admin(principal) and group.teacher_id != principal.id:
+            raise ApiError("Группа другого преподавателя", 403)
+        where.append(Attempt.user_id.in_([m.id for m in group.members] or [None]))
+    if not where:
+        raise ApiError("Укажите занятие, обучающегося или группу", 422)
+    return where
+
+
+def _insight_content(kind, payload, error_rows):
+    if kind is InsightKind.STUDENT_RECOMMENDATION:
+        if not payload.target_user_id:
+            raise ApiError("Для рекомендаций нужен target_user_id", 422)
+        user = get_or_404(User, payload.target_user_id, "Пользователь")
+        stats = analytics.user_progress(user.id)["summary"]
+        return ai.build_student_recommendation(stats, error_rows, user.full_name)
+
+    group_name = None
+    if payload.target_group_id:
+        group_name = db.session.get(Group, payload.target_group_id).name
+    built = ai.build_group_insight(error_rows, group_name)
+    if kind is InsightKind.SESSION_SUMMARY and payload.session_id:
+        built["data"]["session"] = analytics.session_results(payload.session_id)
+    return built
+
+
 @reports_bp.post("/insights/generate")
 def generate_insight():
     principal = require("insight.manage")
     payload = body(InsightGenerateIn)
     kind = InsightKind(payload.kind)
 
-    where = []
-    if payload.session_id:
-        where.append(Attempt.session_id == payload.session_id)
-    if payload.target_user_id:
-        where.append(Attempt.user_id == payload.target_user_id)
-    if payload.target_group_id:
-        group = get_or_404(Group, payload.target_group_id, "Группа")
-        member_ids = [m.id for m in group.members] or [None]
-        where.append(Attempt.user_id.in_(member_ids))
-    if not where:
-        raise ApiError("Укажите занятие, обучающегося или группу", 422)
-
+    where = _insight_filters(principal, payload)
     error_rows = db.session.execute(
         select(AttemptError.kind, AttemptError.field_key)
         .join(Attempt, Attempt.id == AttemptError.attempt_id)
         .where(*where)
         .limit(10000)
     ).all()
-    error_rows = [(kind_.value, field) for kind_, field in error_rows]
-
-    if kind is InsightKind.STUDENT_RECOMMENDATION:
-        if not payload.target_user_id:
-            raise ApiError("Для рекомендаций нужен target_user_id", 422)
-        user = get_or_404(User, payload.target_user_id, "Пользователь")
-        stats = analytics.user_progress(user.id)["summary"]
-        built = ai.build_student_recommendation(stats, error_rows, user.full_name)
-    else:
-        group_name = None
-        if payload.target_group_id:
-            group_name = db.session.get(Group, payload.target_group_id).name
-        built = ai.build_group_insight(error_rows, group_name)
-        if kind is InsightKind.SESSION_SUMMARY and payload.session_id:
-            built["data"]["session"] = analytics.session_results(payload.session_id)
+    built = _insight_content(kind, payload, [(k.value, f) for k, f in error_rows])
 
     insight = Insight(
         kind=kind,

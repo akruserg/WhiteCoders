@@ -50,6 +50,7 @@ def _profile(user):
         **user.to_dict(),
         "role": user.role.to_dict(),
         "permissions": sorted(user_permissions(user)),
+        "consent_required": user.pd_consent_at is None,
         "service_scope": [category.to_dict() for category in user.service_scope],
         "groups": [{"id": str(g.id), "name": g.name} for g in user.groups],
     }
@@ -176,6 +177,17 @@ def logout():
 @auth_bp.get("/auth/me")
 def me():
     return ok(_profile(current_user()))
+
+
+@auth_bp.post("/auth/consent")
+def give_consent():
+    """Согласие на обработку персональных данных (152-ФЗ). Фиксируется время."""
+    user = current_user()
+    if user.pd_consent_at is None:
+        user.pd_consent_at = datetime.now(timezone.utc)
+        write_audit(db.session, request, user, "auth.consent", "user", user.id)
+        commit()
+    return ok({"consent_at": user.pd_consent_at.isoformat()})
 
 
 @auth_bp.post("/auth/password")

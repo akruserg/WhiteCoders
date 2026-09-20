@@ -2,9 +2,10 @@ API-контракт АРМ-112 (учебное ПО подготовки опе
 Базовый префикс: /api/v1. Формат: JSON, ошибки: {"error": {"code", "message", "details"}, "request_id"}.
 Авторизация: заголовок Authorization: Bearer <access_token>, получение: POST /auth/login.
 Полная спецификация OpenAPI 3.1: GET /api/v1/openapi.json
-Всего маршрутов: 101
+Всего маршрутов: 107
 
 == Аутентификация ==
+POST    /api/v1/auth/consent   [Bearer JWT]
 POST    /api/v1/auth/login     [без токена]
 POST    /api/v1/auth/logout    [без токена]
 GET     /api/v1/auth/me        [Bearer JWT]
@@ -26,6 +27,7 @@ GET     /api/v1/users                                [Bearer JWT]
 POST    /api/v1/users                                [Bearer JWT]
 GET     /api/v1/users/{user_id}                      [Bearer JWT]
 PATCH   /api/v1/users/{user_id}                      [Bearer JWT]
+POST    /api/v1/users/{user_id}/anonymize            [Bearer JWT]
 POST    /api/v1/users/{user_id}/block                [Bearer JWT]
 POST    /api/v1/users/{user_id}/reset-password       [Bearer JWT]
 POST    /api/v1/users/{user_id}/unblock              [Bearer JWT]
@@ -66,6 +68,7 @@ PUT     /api/v1/attempts/{attempt_id}/draft                   [Bearer JWT]
 POST    /api/v1/attempts/{attempt_id}/grade                   [Bearer JWT]
 GET     /api/v1/attempts/{attempt_id}/messages                [Bearer JWT]
 POST    /api/v1/attempts/{attempt_id}/messages                [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/scenario                [Bearer JWT]
 POST    /api/v1/attempts/{attempt_id}/submit                  [Bearer JWT]
 GET     /api/v1/sessions                                      [Bearer JWT]
 POST    /api/v1/sessions                                      [Bearer JWT]
@@ -113,8 +116,11 @@ POST    /api/v1/system/backups                      [Bearer JWT]
 GET     /api/v1/system/events                       [Bearer JWT]
 GET     /api/v1/system/health                       [Bearer JWT]
 GET     /api/v1/system/metrics                      [Bearer JWT]
+GET     /api/v1/system/services                     [Bearer JWT]
 POST    /api/v1/system/services/{service}/{action}  [Bearer JWT]
 GET     /api/v1/system/settings                     [Bearer JWT]
+GET     /api/v1/system/settings/export.xml          [Bearer JWT]
+POST    /api/v1/system/settings/import              [Bearer JWT]
 PUT     /api/v1/system/settings/{key}               [Bearer JWT]
 GET     /api/v1/system/voip                         [Bearer JWT]
 

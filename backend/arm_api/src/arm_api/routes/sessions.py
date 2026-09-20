@@ -13,6 +13,7 @@ POST /sessions/{id}/attempts/next         - получить случайную 
 POST /attempts/{id}/answer                - принять входящий вызов
 POST /attempts/{id}/messages              - реплика оператора в диалоге
 PUT  /attempts/{id}/draft                 - сохранить черновик карточки
+POST /attempts/{id}/scenario              - сделать сценарий из карточки обучающегося
 POST /attempts/{id}/submit                - отправить заполненную карточку
 GET  /attempts/{id}                       - результат с разбором ошибок
 POST /attempts/{id}/grade                 - экспертная оценка преподавателем
@@ -60,7 +61,7 @@ from ..schemas import (
     SessionUpdate,
     SubmitIn,
 )
-from ..services import ai, grammar, integrations, scoring
+from ..services import ai, card_schema, grammar, integrations, scoring
 from ._helpers import body, commit, get_or_404, ok, uuid_arg
 
 sessions_bp = Blueprint("sessions", __name__)
@@ -745,6 +746,15 @@ def submit_card(attempt_id):
             payload.answer,
             template.fields if template else [],
             rules=(profile.syntax_rules if profile else None),
+            known_words=grammar.words_of(
+                scenario.title,
+                *(scenario.reference_card or {}).values(),
+                *[
+                    v
+                    for v in (scenario.legend or {}).values()
+                    if isinstance(v, (str, list))
+                ],
+            ),
         )
 
     verdict = scoring.evaluate(
@@ -854,6 +864,73 @@ def get_attempt(attempt_id):
         result["reference_card"] = scenario.reference_card if scenario else None
         result["reference_actions"] = scenario.reference_actions if scenario else None
     return ok(result)
+
+
+def _as_text(value):
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return "" if value is None else str(value).strip()
+
+
+def _action_types(actions):
+    types = [a.get("type") if isinstance(a, dict) else a for a in actions or []]
+    return [t for t in types if t in card_schema.ACTION_TYPES]
+
+
+@sessions_bp.post("/attempts/<uuid:attempt_id>/scenario")
+def promote_attempt(attempt_id):
+    """Делает из оцененной карточки обучающегося новый сценарий (ТЗ: «сформированные
+    обучающимися карточки»). Сценарий уходит на утверждение преподавателю, после
+    утверждения попадает в занятия с источником student или mixed."""
+    principal = require("scenario.manage")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка")
+    _owned_session(attempt.session_id, principal)
+    if attempt.status is not AttemptStatus.EVALUATED:
+        raise ApiError("Использовать можно только оцененную карточку", 409)
+    if db.session.execute(
+        select(Scenario.id).where(Scenario.source_attempt_id == attempt.id)
+    ).first():
+        raise ApiError("Сценарий из этой карточки уже создан", 409)
+
+    source = db.session.get(Scenario, attempt.scenario_id)
+    template = db.session.get(CardTemplate, source.template_id)
+    keys = [f["key"] for f in (template.fields if template else []) if f.get("key")]
+    card = {
+        k: _as_text((attempt.answer or {}).get(k))
+        for k in keys
+        if _as_text((attempt.answer or {}).get(k))
+    }
+    if not card:
+        raise ApiError("В карточке нет заполненных полей", 422)
+
+    scenario = Scenario(
+        title=f"{source.title} (карточка обучающегося)"[:255],
+        category_id=source.category_id,
+        template_id=source.template_id,
+        difficulty=source.difficulty,
+        origin=ScenarioOrigin.STUDENT,
+        status=ScenarioStatus.PENDING_REVIEW,
+        legend=source.legend,
+        reference_card=card,
+        reference_actions=_action_types(attempt.actions) or source.reference_actions,
+        time_limit_sec=attempt.time_limit_sec,
+        grading_profile_id=source.grading_profile_id,
+        source_attempt_id=attempt.id,
+        author_id=principal.id,
+    )
+    db.session.add(scenario)
+    db.session.flush()
+    write_audit(
+        db.session,
+        request,
+        principal,
+        "scenario.from_attempt",
+        "scenario",
+        scenario.id,
+        {"attempt_id": str(attempt.id)},
+    )
+    commit()
+    return ok(scenario.to_dict(), 201)
 
 
 @sessions_bp.post("/attempts/<uuid:attempt_id>/grade")

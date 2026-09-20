@@ -179,7 +179,7 @@ def session_results(session_id):
     }
 
 
-def error_heatmap(session_id=None, group_id=None, category_id=None):
+def error_heatmap(session_id=None, group_id=None, category_id=None, teacher_id=None):
     where = [Attempt.status.in_(_EVALUATED)]
     stmt = select(
         func.coalesce(AttemptError.field_key, "-"),
@@ -191,9 +191,12 @@ def error_heatmap(session_id=None, group_id=None, category_id=None):
     if category_id:
         stmt = stmt.join(Scenario, Scenario.id == Attempt.scenario_id)
         where.append(Scenario.category_id == category_id)
-    if group_id:
+    if group_id or teacher_id:
         stmt = stmt.join(TrainingSession, TrainingSession.id == Attempt.session_id)
+    if group_id:
         where.append(TrainingSession.group_id == group_id)
+    if teacher_id:
+        where.append(TrainingSession.teacher_id == teacher_id)
 
     rows = db.session.execute(
         stmt.where(and_(*where))

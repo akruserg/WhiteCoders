@@ -10,6 +10,7 @@ GET    /roles, GET /permissions   - справочники RBAC
 CRUD   /groups                    - учебные группы и их состав
 """
 
+import uuid
 from datetime import datetime, timezone
 
 from flask import Blueprint, request
@@ -29,6 +30,7 @@ from ..core.security import (
 )
 from ..models import Group, IncidentCategory, Permission, Role, User
 from ..schemas import GroupIn, MembersIn, PasswordResetIn, UserCreate, UserUpdate
+from ..services.backup import require_recent_backup
 from ._helpers import body, commit, get_or_404, item, items, ok, uuid_arg
 
 users_bp = Blueprint("users", __name__)
@@ -242,6 +244,36 @@ def reset_password(user_id):
     return ok({"status": "ok"})
 
 
+@users_bp.post("/users/<uuid:user_id>/anonymize")
+def anonymize_user(user_id):
+    """Обезличивает учетную запись (152-ФЗ): ФИО, логин и почта заменяются,
+    вход закрывается. Результаты занятий остаются для статистики."""
+    principal = require("user.manage")
+    user = get_or_404(User, user_id, "Пользователь")
+    if user.id == principal.id:
+        raise ApiError("Нельзя обезличить собственную учетную запись", 409)
+    if user.anonymized_at is not None:
+        raise ApiError("Учетная запись уже обезличена", 409)
+    require_recent_backup()
+
+    tag = user.id.hex[:8]
+    user.full_name = f"Обезличенный пользователь {tag}"
+    user.username = f"anon-{tag}"
+    user.email = None
+    user.mfa_enabled = False
+    user.mfa_secret = None
+    user.password_hash = hash_password(uuid.uuid4().hex + uuid.uuid4().hex)
+    user.is_active = False
+    user.is_blocked = True
+    user.anonymized_at = datetime.now(timezone.utc)
+    for token in user.refresh_tokens:
+        if token.revoked_at is None:
+            token.revoked_at = user.anonymized_at
+    write_audit(db.session, request, principal, "user.anonymize", "user", user.id)
+    commit()
+    return ok(_user_view(user))
+
+
 @users_bp.get("/roles")
 def list_roles():
     current_user()
@@ -386,6 +418,7 @@ def delete_group(group_id):
     group = _editable_group(get_or_404(Group, group_id, "Группа"), principal)
     if group.sessions:
         raise ApiError("Нельзя удалить группу, по которой проводились занятия", 409)
+    require_recent_backup()
     db.session.delete(group)
     write_audit(db.session, request, principal, "group.delete", "group", group_id)
     commit()

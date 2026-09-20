@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = [
     ("voip.max_latency_ms", "voip", 150, "Допустимая задержка голоса, мс (норма ТЗ)", False, False),
     ("backup.keep_count", "backup", 30, "Сколько последних резервных копий хранить", False, False),
     ("audit.retention_days", "logging", 190, "Сколько дней хранить журнал аудита (не менее 6 месяцев)", False, False),
+    ("backup.enabled", "backup", True, "Ежедневное резервное копирование и очистка журнала", False, False),
     ("ai.enabled", "ai", False, "Включить ИИ-модуль (генерация сценариев, инсайты)", False, True),
     ("ai.scoring_enabled", "ai", False, "Смысловая проверка текстовых полей нейросетью", False, True),
     ("security.max_failed_logins", "security", 5, "Неудачных входов до блокировки", False, True),

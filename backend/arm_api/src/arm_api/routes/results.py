@@ -8,7 +8,7 @@ GET /analytics/heatmap      - тепловая карта ошибок
 GET /analytics/overview     - сводка по системе
 """
 
-from flask import Blueprint, request
+from flask import Blueprint
 from sqlalchemy import select
 
 from ..core.errors import ApiError
@@ -17,7 +17,7 @@ from ..core.pagination import paginate
 from ..core.security import current_user, is_admin, is_student, require
 from ..models import Attempt, AttemptStatus, Insight, TrainingSession, User
 from ..services import analytics
-from ._helpers import get_or_404, ok
+from ._helpers import get_or_404, int_arg, ok, uuid_arg
 
 results_bp = Blueprint("results", __name__)
 
@@ -25,8 +25,7 @@ results_bp = Blueprint("results", __name__)
 @results_bp.get("/me/progress")
 def my_progress():
     principal = current_user()
-    session_id = request.args.get("session_id")
-    return ok(analytics.user_progress(principal.id, session_id))
+    return ok(analytics.user_progress(principal.id, uuid_arg("session_id")))
 
 
 @results_bp.get("/me/attempts")
@@ -39,8 +38,8 @@ def my_attempts():
         )
         .order_by(Attempt.submitted_at.desc())
     )
-    if request.args.get("session_id"):
-        stmt = stmt.where(Attempt.session_id == request.args["session_id"])
+    if uuid_arg("session_id"):
+        stmt = stmt.where(Attempt.session_id == uuid_arg("session_id"))
     return ok(
         paginate(
             stmt,
@@ -84,7 +83,7 @@ def user_progress(user_id):
     if not is_student(principal):
         require("report.read.any")
     get_or_404(User, user_id, "Пользователь")
-    return ok(analytics.user_progress(user_id, request.args.get("session_id")))
+    return ok(analytics.user_progress(user_id, uuid_arg("session_id")))
 
 
 @results_bp.get("/sessions/<uuid:session_id>/results")
@@ -100,12 +99,14 @@ def session_results(session_id):
 
 @results_bp.get("/analytics/heatmap")
 def heatmap():
-    require("report.read.any", "insight.manage")
+    principal = require("report.read.any", "insight.manage")
     return ok(
         analytics.error_heatmap(
-            session_id=request.args.get("session_id"),
-            group_id=request.args.get("group_id"),
-            category_id=request.args.get("category_id", type=int),
+            session_id=uuid_arg("session_id"),
+            group_id=uuid_arg("group_id"),
+            category_id=int_arg("category_id"),
+            # преподаватель видит только свои занятия
+            teacher_id=None if is_admin(principal) else principal.id,
         )
     )
 

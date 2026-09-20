@@ -10,6 +10,7 @@ from flask import current_app
 from sqlalchemy import delete, select
 from sqlalchemy.engine.url import make_url
 
+from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import log_event
 from ..models import AuditLog, Backup
@@ -168,7 +169,27 @@ def has_successful_automatic_backup_since(since):
     )
 
 
+def require_recent_backup(max_age_hours=24):
+    """Разрушающие операции разрешены только после свежей резервной копии (ТЗ)."""
+    since = _now() - timedelta(hours=max_age_hours)
+    fresh = db.session.execute(
+        select(Backup.id)
+        .where(Backup.status == "success", Backup.started_at >= since)
+        .limit(1)
+    ).first()
+    if fresh is None:
+        raise ApiError(
+            f"Нет успешной резервной копии за последние {max_age_hours} ч: "
+            "создайте ее (POST /system/backups) и повторите операцию",
+            409,
+            code="backup_required",
+        )
+
+
 def run_daily_backup_if_due():
+    if not settings.get("backup.enabled", True):
+        logger.info("Планировщик бэкапов остановлен администратором")
+        return None
     since = _now() - timedelta(hours=24)
     if has_successful_automatic_backup_since(since):
         logger.info("Ежедневный бэкап пропущен: успешная копия уже есть за 24 часа")

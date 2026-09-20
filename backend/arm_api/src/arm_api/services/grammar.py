@@ -1,4 +1,5 @@
 import re
+from functools import lru_cache
 
 # Проверка построена на простых правилах оформления записи (пробелы, регистр,
 # парные скобки, смешение алфавитов). Орфографию по словарю она не проверяет.
@@ -11,6 +12,7 @@ DEFAULT_RULES = {
     "trailing_punct": False,  # точка в конце
     "repeated_word": True,  # повтор слова подряд
     "latin_in_russian": True,  # латиница внутри русского слова (о0, c/с)
+    "spelling": True,  # слово, которого нет в словаре русского языка
     "unbalanced_brackets": True,
     "min_words": 0,  # минимум слов в текстовом поле
 }
@@ -127,6 +129,69 @@ def _latin_in_russian(text, key, rules):
     return []
 
 
+_CYR_WORD = re.compile(r"[А-Яа-яЁё]{4,}")
+_ALPHABET = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+
+
+@lru_cache(maxsize=1)
+def _morph():
+    """Морфологический словарь (pymorphy3). Нет библиотеки - проверка пропускается."""
+    try:
+        import pymorphy3
+    except ImportError:
+        return None
+    return pymorphy3.MorphAnalyzer()
+
+
+def _edits(word):
+    splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+    deletes = (a + b[1:] for a, b in splits if b)
+    swaps = (a + b[1] + b[0] + b[2:] for a, b in splits if len(b) > 1)
+    replaces = (a + c + b[1:] for a, b in splits if b for c in _ALPHABET)
+    inserts = (a + c + b for a, b in splits for c in _ALPHABET)
+    return set(deletes) | set(swaps) | set(replaces) | set(inserts)
+
+
+def _suggest(morph, word):
+    known = [c for c in _edits(word) if morph.word_is_known(c)]
+    if not known:
+        return None
+    return max(known, key=lambda c: morph.parse(c)[0].score)
+
+
+def _starts_sentence(text, position):
+    return not text[:position].rstrip() or text[:position].rstrip()[-1] in ".!?"
+
+
+def _spelling(text, key, rules):
+    """Слова вне словаря. Не трогаем аббревиатуры, имена внутри предложения и слова
+    из условий сценария (known_words): адреса и названия оператор переписывает."""
+    morph = _morph()
+    if morph is None:
+        return []
+    known = rules.get("known_words") or ()
+    issues = []
+    for match in _CYR_WORD.finditer(text):
+        word = match.group(0)
+        lower = word.lower()
+        if word.isupper() or lower in known or morph.word_is_known(lower):
+            continue
+        if word[0].isupper() and not _starts_sentence(text, match.start()):
+            continue
+        issues.append(
+            _issue(
+                key,
+                f"Возможная орфографическая ошибка в слове «{word}»",
+                actual=word,
+                expected=_suggest(morph, lower),
+                position=match.start(),
+            )
+        )
+        if len(issues) == 3:
+            break
+    return issues
+
+
 def _unbalanced_brackets(text, key, rules):
     if text.count("(") == text.count(")") and text.count("«") == text.count("»"):
         return []
@@ -156,6 +221,7 @@ _RULES = (
     ("trailing_punct", _trailing_punct),
     ("repeated_word", _repeated_word),
     ("latin_in_russian", _latin_in_russian),
+    ("spelling", _spelling),
     ("unbalanced_brackets", _unbalanced_brackets),
     ("min_words", _min_words),
 )
@@ -173,7 +239,13 @@ def check_text(text, field_key=None, rules=None):
     return issues
 
 
-def check_answer(answer, template_fields, rules=None):
+def words_of(*texts):
+    """Слова из условий сценария: их написание не считается ошибкой."""
+    joined = " ".join(str(t) for t in texts if t)
+    return {w.lower() for w in _CYR_WORD.findall(joined)}
+
+
+def check_answer(answer, template_fields, rules=None, known_words=()):
     issues = []
     text_types = {"text", "textarea", "string", None}
     by_key = {f.get("key"): f for f in (template_fields or []) if isinstance(f, dict)}
@@ -184,7 +256,11 @@ def check_answer(answer, template_fields, rules=None):
         field = by_key.get(key, {})
         if field.get("type") not in text_types:
             continue
-        field_rules = {**(rules or {}), **(field.get("syntax_rules") or {})}
+        field_rules = {
+            **(rules or {}),
+            **(field.get("syntax_rules") or {}),
+            "known_words": known_words,
+        }
         issues.extend(check_text(value, field_key=key, rules=field_rules))
     return issues
 
