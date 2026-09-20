@@ -9,6 +9,7 @@
 - **Доска задач:** https://t.me/c/4363884787/2
 - **Дизайн (Figma):** https://www.figma.com/design/WFHNbYBu5rjj46low0UtC6/Untitled?node-id=0-1&t=Ip3DS5hGRet4Og2O-1
 - **API-контракт:** [`api.txt`](./api.txt)
+- **Установка и эксплуатация бэкенда:** [`backend/README.md`](./backend/README.md)
 - **Презентация:** _https://t.me/c/4363884787/3_
 - **Сопроводительная документация:** _https://t.me/c/4363884787/3_
 
@@ -24,9 +25,9 @@
 
 ```
 /frontend       — клиентский код (вёрстка + интеграция с API)
-/backend        — серверный код, БД, API
+/backend        — серверный код: API, VoIP, ИИ-модуль, прокси; установка и эксплуатация — backend/README.md
 /design         — экспорт макетов из Figma, ассеты
-api.txt         — контракт API (эндпоинты, форматы запросов/ответов)
+api.txt         — контракт API (список маршрутов; полный — /api/v1/openapi.json)
 README.md       — этот файл
 ```
 
