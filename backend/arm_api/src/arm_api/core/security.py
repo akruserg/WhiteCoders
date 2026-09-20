@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from flask import current_app, g, request
+from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .errors import ApiError
@@ -211,6 +212,8 @@ _PUBLIC_PATHS = {
     "/auth/mfa",
     "/auth/refresh",
     "/auth/logout",
+    "/openapi.json",
+    "/internal/voip/events",  # закрыт служебным токеном, а не JWT
 }
 
 
@@ -307,9 +310,21 @@ def is_student(user):
     return user.role.code == "student"
 
 
+AUDIT_LOCK_KEY = 112001  # ключ advisory-lock: записи журнала строятся в цепочку
+
+
 def _entry_hash(prev_hash, parts):
     payload = "|".join([prev_hash or ""] + [str(p) for p in parts])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def audit_entry_hash(entry):
+    """Хэш записи по ее содержимому. Им же журнал проверяется на подделку."""
+    ts = entry.ts.astimezone(timezone.utc).isoformat()
+    return _entry_hash(
+        entry.prev_hash,
+        [ts, entry.user_id, entry.action, entry.object_type, entry.object_id],
+    )
 
 
 def write_audit(
@@ -319,6 +334,9 @@ def write_audit(
 
     from ..models import AuditLog
 
+    # Без блокировки два воркера читают один и тот же prev_hash и цепочка
+    # раздваивается. Блокировка снимается вместе с транзакцией.
+    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": AUDIT_LOCK_KEY})
     prev_hash = session.execute(
         select(AuditLog.entry_hash).order_by(AuditLog.id.desc()).limit(1)
     ).scalar()
@@ -336,10 +354,7 @@ def write_audit(
         payload=payload or {},
         prev_hash=prev_hash,
     )
-    entry.entry_hash = _entry_hash(
-        prev_hash,
-        [ts.isoformat(), entry.user_id, action, object_type, entry.object_id],
-    )
+    entry.entry_hash = audit_entry_hash(entry)
     session.add(entry)
     return entry
 

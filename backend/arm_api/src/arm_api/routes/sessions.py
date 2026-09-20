@@ -60,9 +60,13 @@ from ..schemas import (
     SubmitIn,
 )
 from ..services import grammar, integrations, scoring
-from ._helpers import body, commit, get_or_404, ok
+from ._helpers import body, commit, get_or_404, ok, uuid_arg
 
 sessions_bp = Blueprint("sessions", __name__)
+
+# поля легенды, которые обучающийся до конца карточки видеть не должен:
+# подсказки, правки преподавателя и будущие реплики заявителя
+HIDDEN_FROM_STUDENT = ("hints", "corrections", "followups")
 
 
 def _owned_session(session_id, principal):
@@ -150,14 +154,12 @@ def _pick_scenario(session, user):
     if categories:
         stmt = stmt.where(Scenario.category_id.in_(categories))
 
-    used = (
+    used = set(
         db.session.execute(
             select(Attempt.scenario_id).where(
                 Attempt.session_id == session.id, Attempt.user_id == user.id
             )
-        )
-        .scalars()
-        .all()
+        ).scalars()
     )
 
     pool = list(db.session.execute(stmt.limit(500)).scalars())
@@ -167,7 +169,7 @@ def _pick_scenario(session, user):
             409,
             code="no_scenarios",
         )
-    fresh = [s for s in pool if s.id not in set(used)]
+    fresh = [s for s in pool if s.id not in used]
     return random.choice(fresh or pool)
 
 
@@ -234,8 +236,9 @@ def list_sessions():
             stmt = stmt.where(TrainingSession.status == SessionStatus(status))
         except ValueError:
             raise ApiError("Некорректный status", 422)
-    if request.args.get("group_id"):
-        stmt = stmt.where(TrainingSession.group_id == request.args["group_id"])
+    group_id = uuid_arg("group_id")
+    if group_id:
+        stmt = stmt.where(TrainingSession.group_id == group_id)
 
     return ok(paginate(stmt, serializer=lambda row: _session_view(row, principal)))
 
@@ -349,6 +352,7 @@ def finish_session(session_id):
     session.finished_at = datetime.now(timezone.utc)
 
     expired = 0
+    hangups = []
     open_attempts = db.session.execute(
         select(Attempt).where(
             Attempt.session_id == session.id,
@@ -362,7 +366,7 @@ def finish_session(session_id):
             if call.status is not CallStatus.FINISHED:
                 call.status = CallStatus.FINISHED
                 call.finish_at = session.finished_at
-                integrations.hangup(call.sip_call_id)
+                hangups.append(call.sip_call_id)
 
     write_audit(
         db.session,
@@ -374,6 +378,8 @@ def finish_session(session_id):
         {"expired_attempts": expired},
     )
     commit()
+    for sip_call_id in hangups:  # сетевые вызовы - после фиксации в БД
+        integrations.hangup(sip_call_id)
     return ok(_session_view(session, principal))
 
 
@@ -438,8 +444,9 @@ def list_session_attempts(session_id):
     )
     if is_student(principal):
         stmt = stmt.where(Attempt.user_id == principal.id)
-    if request.args.get("user_id"):
-        stmt = stmt.where(Attempt.user_id == request.args["user_id"])
+    user_id = uuid_arg("user_id")
+    if user_id:
+        stmt = stmt.where(Attempt.user_id == user_id)
     return ok(paginate(stmt))
 
 
@@ -449,7 +456,10 @@ def next_card(session_id):
     session = get_or_404(TrainingSession, session_id, "Занятие")
     if session.status is not SessionStatus.RUNNING:
         raise ApiError("Занятие не активно", 409, code="session_not_running")
-    if db.session.get(SessionParticipant, (session.id, principal.id)) is None:
+    participant = db.session.get(
+        SessionParticipant, (session.id, principal.id), with_for_update=True
+    )
+    if participant is None:
         raise ApiError("Вы не участник этого занятия", 403)
 
     open_attempt = (
@@ -506,12 +516,10 @@ def next_card(session_id):
     db.session.flush()
 
     channel = (session.settings or {}).get("channel", "text")
-    info = integrations.start_call(attempt.id, channel, principal.username)
     call = Call(
         attempt_id=attempt.id,
-        channel=CallChannel(info["channel"]),
-        sip_call_id=info["sip_call_id"],
-        caller_number=info["caller_number"],
+        channel=CallChannel.TEXT,
+        caller_number=integrations.caller_number(attempt.id),
         status=CallStatus.RINGING,
     )
     db.session.add(call)
@@ -531,6 +539,20 @@ def next_card(session_id):
     )
     commit()
 
+    # Звонок - только после коммита: события от arm_voip (в т.ч. быстрый неответ)
+    # должны находить строку calls, иначе состояние останется «звонит».
+    info = integrations.start_call(
+        attempt.id,
+        channel,
+        principal.username,
+        caller_hint=call.caller_number,
+        audio=(scenario.legend or {}).get("audio"),
+    )
+    if info["channel"] == "voip":
+        call.channel = CallChannel.VOIP
+        call.sip_call_id = info["sip_call_id"]
+        commit()
+
     return ok(
         {
             "attempt": attempt.to_dict(),
@@ -538,6 +560,8 @@ def next_card(session_id):
                 **call.to_dict(),
                 "degraded": info["degraded"],
                 "sip_server": info["sip_server"],
+                "sip": info["sip"],
+                "ring_timeout_sec": info.get("ring_timeout_sec"),
             },
             "scenario": {
                 "id": str(scenario.id),
@@ -546,7 +570,7 @@ def next_card(session_id):
                 "legend": {
                     k: v
                     for k, v in (scenario.legend or {}).items()
-                    if k not in ("hints", "corrections")
+                    if k not in HIDDEN_FROM_STUDENT
                 },
             },
             "template_fields": template.fields if template else [],
@@ -559,7 +583,7 @@ def next_card(session_id):
 @sessions_bp.post("/attempts/<uuid:attempt_id>/answer")
 def answer_call(attempt_id):
     principal = require("session.participate")
-    attempt = get_or_404(Attempt, attempt_id, "Карточка")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
     if attempt.user_id != principal.id:
         raise ApiError("Карточка другого обучающегося", 403)
     if attempt.status is not AttemptStatus.ISSUED:
@@ -581,8 +605,9 @@ def answer_call(attempt_id):
             else call.ring_at.replace(tzinfo=timezone.utc)
         )
         call.status = CallStatus.ANSWERED
-        call.answer_at = now
-        call.answer_delay_ms = int((now - ring_at).total_seconds() * 1000)
+        if call.answer_at is None:  # при VoIP время ответа уже пришло от arm_voip
+            call.answer_at = now
+            call.answer_delay_ms = int((now - ring_at).total_seconds() * 1000)
 
     commit()
     return ok(
@@ -612,9 +637,13 @@ def send_message(attempt_id):
     if call is None:
         raise ApiError("Вызов не найден", 404)
 
+    turn = db.session.execute(
+        select(func.count(CallMessage.id)).where(
+            CallMessage.call_id == call.id, CallMessage.author == "operator"
+        )
+    ).scalar_one()
     db.session.add(CallMessage(call_id=call.id, author="operator", text=payload.text))
     scenario = db.session.get(Scenario, attempt.scenario_id)
-    turn = sum(1 for m in call.messages if m.author == "operator")
     reply = integrations.caller_reply(
         scenario.legend if scenario else {}, payload.text, turn
     )
@@ -648,13 +677,19 @@ def list_messages(attempt_id):
 @sessions_bp.post("/attempts/<uuid:attempt_id>/submit")
 def submit_card(attempt_id):
     principal = require("attempt.submit")
-    attempt = get_or_404(Attempt, attempt_id, "Карточка")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
     if attempt.user_id != principal.id:
         raise ApiError("Карточка другого обучающегося", 403)
     if attempt.status in {AttemptStatus.SUBMITTED, AttemptStatus.EVALUATED}:
         raise ApiError("Карточка уже отправлена", 409)
     if attempt.status is AttemptStatus.EXPIRED:
         raise ApiError("Занятие завершено, карточка закрыта", 409)
+    if attempt.status is AttemptStatus.ISSUED:
+        raise ApiError(
+            "Сначала примите вызов: время на карточку отсчитывается с ответа",
+            409,
+            code="call_not_answered",
+        )
 
     payload = body(SubmitIn)
     now = datetime.now(timezone.utc)
@@ -691,6 +726,7 @@ def submit_card(attempt_id):
         time_limit_sec=attempt.time_limit_sec,
         grammar_errors=grammar_issues,
         profile=profile,
+        default_pass_score=current_app.config["DEFAULT_PASS_SCORE"],
     )
 
     attempt.score = round(verdict.score, 2)
@@ -702,7 +738,7 @@ def submit_card(attempt_id):
     }
     attempt.evaluated_by = EvaluationSource.AI
     attempt.evaluated_at = now
-    attempt.ai_model = getattr(profile, "name", None) or "scoring-v1"
+    attempt.ai_model = scoring.ENGINE
     attempt.status = AttemptStatus.EVALUATED
 
     for error in verdict.errors:
@@ -724,10 +760,11 @@ def submit_card(attempt_id):
         .scalars()
         .first()
     )
+    hangup_id = None
     if call is not None:
         call.status = CallStatus.FINISHED
         call.finish_at = now
-        integrations.hangup(call.sip_call_id)
+        hangup_id = call.sip_call_id
 
     write_audit(
         db.session,
@@ -739,6 +776,7 @@ def submit_card(attempt_id):
         {"score": float(attempt.score), "passed": bool(attempt.passed)},
     )
     commit()
+    integrations.hangup(hangup_id)  # сетевой вызов - после фиксации в БД
     return ok(_attempt_result(attempt))
 
 
@@ -784,7 +822,10 @@ def get_attempt(attempt_id):
 @sessions_bp.post("/attempts/<uuid:attempt_id>/grade")
 def grade_attempt(attempt_id):
     principal = require("attempt.grade")
-    attempt = get_or_404(Attempt, attempt_id, "Карточка")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
+    _owned_session(attempt.session_id, principal)
+    if attempt.status is not AttemptStatus.EVALUATED:
+        raise ApiError("Оценивать можно только отправленную карточку", 409)
     payload = body(ExpertGradeIn)
 
     old_score = (

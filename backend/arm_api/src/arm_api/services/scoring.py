@@ -2,9 +2,17 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+ENGINE = "rule-based-v1"  # оценка правилами и сравнением с эталоном, без нейросети
+
 DEFAULT_WEIGHTS = {"content": 0.55, "procedure": 0.20, "timing": 0.15, "grammar": 0.10}
 
 FUZZY_MATCH_THRESHOLD = 0.82
+# если в ответе и эталоне разные числа (дом, квартира), совпадением это не считаем
+MISMATCHED_NUMBERS_CAP = 0.5
+
+# Допустимое число ошибок, когда профиль оценивания не задан. Совпадает со
+# значениями по умолчанию у GradingProfileIn: без профиля не строже и не мягче.
+DEFAULT_LIMITS = {"content": 0, "procedure": 0, "missing": 0}
 
 
 class Verdict:
@@ -47,7 +55,12 @@ def similarity(a, b):
         return 0.0
     if a == b:
         return 1.0
-    return SequenceMatcher(None, a, b).ratio()
+    ratio = SequenceMatcher(None, a, b).ratio()
+    # «Профсоюзная 12» и «Профсоюзная 21» отличаются одной перестановкой,
+    # но это разные адреса: числа сравниваем отдельно от текста
+    if sorted(re.findall(r"\d+", a)) != sorted(re.findall(r"\d+", b)):
+        return min(ratio, MISMATCHED_NUMBERS_CAP)
+    return ratio
 
 
 def _phone_like(value):
@@ -230,14 +243,15 @@ def evaluate(
     time_limit_sec,
     grammar_errors=None,
     profile=None,
+    default_pass_score=70.0,
 ):
     grammar_errors = list(grammar_errors or [])
 
     weights = dict(DEFAULT_WEIGHTS)
-    pass_score = 70.0
+    pass_score = float(default_pass_score)
     tolerance = 10
     max_grammar = 2
-    limits = {"content": None, "procedure": None, "missing": None}
+    limits = dict(DEFAULT_LIMITS)
 
     if profile is not None:
         weights.update(

@@ -11,8 +11,14 @@ from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import current_user, is_student, require, write_audit
 from ..models import CardTemplate, GradingProfile, IncidentCategory
-from ..schemas import CardTemplateIn, CategoryIn, GradingProfileIn
-from ._helpers import body, commit, get_or_404, item, items
+from ..schemas import (
+    CardTemplateIn,
+    CategoryIn,
+    CategoryUpdate,
+    GradingProfileIn,
+    GradingProfileUpdate,
+)
+from ._helpers import body, commit, get_or_404, item, items, provided_fields
 
 catalog_bp = Blueprint("catalog", __name__)
 
@@ -62,12 +68,11 @@ def create_category():
 def update_category(category_id):
     principal = require("catalog.manage")
     category = get_or_404(IncidentCategory, category_id, "Категория")
-    payload = body(CategoryIn)
-    category.code = payload.code
-    category.name = payload.name
-    category.parent_id = payload.parent_id
-    category.service_code = payload.service_code
-    category.is_active = payload.is_active
+    payload = body(CategoryUpdate)
+    for name in provided_fields() & {
+        "code", "name", "parent_id", "service_code", "is_active"
+    }:  # fmt: skip
+        setattr(category, name, getattr(payload, name))
     write_audit(
         db.session, request, principal, "category.update", "category", category.id
     )
@@ -203,11 +208,9 @@ def update_profile(profile_id):
     ):
         raise ApiError("Профиль другого преподавателя", 403)
 
-    payload = body(GradingProfileIn)
-    for name in _PROFILE_FIELDS:
-        value = getattr(payload, name)
-        if value is not None:
-            setattr(profile, name, value)
+    payload = body(GradingProfileUpdate)
+    for name in provided_fields() & set(_PROFILE_FIELDS):
+        setattr(profile, name, getattr(payload, name))
     if payload.is_default:
         _reset_default()
         profile.is_default = True

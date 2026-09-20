@@ -3,13 +3,17 @@ import random
 
 import httpx
 from flask import current_app
+from sqlalchemy import select
 
 from ..core.config import Config
+from ..core.extensions import db
+from ..models import SystemSetting
+
+VOIP_SETTING_KEY = "voip.enabled"
 
 
 class ArmVoipError(RuntimeError):
-    # астериск пал и не отвечает
-    pass
+    """arm_voip недоступен или отклонил запрос."""
 
 
 def _caller_number(seed):
@@ -18,8 +22,20 @@ def _caller_number(seed):
     return f"+7495{tail:07d}"
 
 
+def caller_number(attempt_id, hint=None):
+    return hint or _caller_number(attempt_id)
+
+
 def voip_available():
-    return Config.VOIP_ENABLED
+    """VoIP включен переменной окружения, администратор может переопределить
+    это в настройке voip.enabled (общая для всех воркеров, в отличие от памяти).
+    """
+    override = db.session.execute(
+        select(SystemSetting.value).where(SystemSetting.key == VOIP_SETTING_KEY)
+    ).scalar()
+    if override is not None:
+        return bool(override)
+    return bool(current_app.config["VOIP_ENABLED"])
 
 
 def _client():
@@ -30,35 +46,33 @@ def _client():
     )
 
 
+def _text_call(channel, number, degraded):
+    return {
+        "channel": "text",
+        "requested_channel": channel,
+        "degraded": degraded,
+        "caller_number": number,
+        "sip_call_id": None,
+        "latency_ms": None,
+        "sip_server": None,
+        "sip": None,
+    }
+
+
 def start_call(
     attempt_id,
     channel="text",
     operator=None,
     caller_hint=None,
+    audio=None,
 ):
-    caller_number = caller_hint or _caller_number(attempt_id)
+    """Создает вызов. При недоступном VoIP занятие продолжается текстом."""
+    number = caller_number(attempt_id, caller_hint)
 
     if channel != "voip":
-        return {
-            "channel": "text",
-            "requested_channel": channel,
-            "degraded": False,
-            "caller_number": caller_number,
-            "sip_call_id": None,
-            "latency_ms": None,
-            "sip_server": None,
-        }
-
+        return _text_call(channel, number, degraded=False)
     if not voip_available():
-        return {
-            "channel": "text",
-            "requested_channel": channel,
-            "degraded": True,
-            "caller_number": caller_number,
-            "sip_call_id": None,
-            "latency_ms": None,
-            "sip_server": None,
-        }
+        return _text_call(channel, number, degraded=True)
 
     try:
         with _client() as client:
@@ -68,6 +82,8 @@ def start_call(
                     "attempt_id": str(attempt_id),
                     "operator": operator or "",
                     "destination": Config.VOIP_DESTINATION or None,
+                    "audio": audio or None,
+                    "caller_number": number,
                 },
             )
         if response.status_code >= 400:
@@ -82,81 +98,61 @@ def start_call(
             attempt_id,
             exc,
         )
-        return {
-            "channel": "text",
-            "requested_channel": channel,
-            "degraded": True,
-            "caller_number": caller_number,
-            "sip_call_id": None,
-            "latency_ms": None,
-            "sip_server": None,
-        }
+        return _text_call(channel, number, degraded=True)
 
+    sip = data.get("sip")
     return {
         "channel": "voip",
         "requested_channel": channel,
         "degraded": False,
-        "caller_number": caller_number,
+        "caller_number": number,
         "sip_call_id": data.get("call_id"),
         "latency_ms": None,
-        "sip_server": Config.ARM_VOIP_BASE_URL,
+        "sip_server": (sip or {}).get("ws_url"),
+        "sip": sip,
+        "ring_timeout_sec": data.get("ring_timeout_sec"),
     }
 
 
 def hangup(sip_call_id=None):
     if not sip_call_id or not voip_available():
-        return {
-            "status": "finished",
-            "sip_call_id": sip_call_id,
-        }
+        return {"status": "finished", "sip_call_id": sip_call_id}
 
     try:
         with _client() as client:
             response = client.delete(f"/calls/{sip_call_id}")
         if response.status_code >= 400:
             raise ArmVoipError(
-                f"arm_voip отклонил hangup "
-                f"({response.status_code}): {response.text}"
+                f"arm_voip отклонил hangup ({response.status_code}): {response.text}"
             )
     except (httpx.HTTPError, ArmVoipError) as exc:
         current_app.logger.warning(
-            "Не удалось завершить звонок %s через arm_voip: %s",
-            sip_call_id,
-            exc,
+            "Не удалось завершить звонок %s через arm_voip: %s", sip_call_id, exc
         )
 
-    return {
-        "status": "finished",
-        "sip_call_id": sip_call_id,
-    }
+    return {"status": "finished", "sip_call_id": sip_call_id}
 
 
 def voip_health():
     if not voip_available():
-        return {
-            "available": False,
-            "provider": None,
-            "reason": "disabled",
-        }
+        return {"available": False, "provider": None, "reason": "disabled"}
 
     try:
         with _client() as client:
             response = client.get("/health")
         if response.status_code >= 400:
-            return {
-                "available": False,
-                "error": f"HTTP {response.status_code}",
-            }
+            return {"available": False, "error": f"HTTP {response.status_code}"}
         return {"available": True, **response.json()}
     except httpx.HTTPError as exc:
         current_app.logger.warning("arm_voip healthcheck failed: %s", exc)
-        return {
-            "available": False,
-            "error": str(exc),
-        }
+        return {"available": False, "error": str(exc)}
 
 
 def caller_reply(scenario_legend, operator_text, turn=0):
+    """Реплика «заявителя» на слова оператора.
+
+    turn - сколько реплик оператора уже было (0 - первая).
+    """
     dialog = list((scenario_legend or {}).get("dialog") or [])
     followups = list((scenario_legend or {}).get("followups") or [])
 

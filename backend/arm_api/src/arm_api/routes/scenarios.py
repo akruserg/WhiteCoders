@@ -35,7 +35,7 @@ from ..schemas import (
     ScenarioValidateIn,
 )
 from ..services import ai, grammar
-from ._helpers import body, commit, get_or_404, ok
+from ._helpers import body, commit, get_or_404, int_arg, ok
 
 scenarios_bp = Blueprint("scenarios", __name__)
 
@@ -47,9 +47,11 @@ def _view(scenario, principal, with_reference=None):
     if not with_reference:
         data.pop("reference_card", None)
         data.pop("reference_actions", None)
-        legend = dict(data.get("legend") or {})
-        legend.pop("hints", None)
-        data["legend"] = legend
+        data["legend"] = {
+            k: v
+            for k, v in (data.get("legend") or {}).items()
+            if k not in ("hints", "corrections", "followups")
+        }
     return data
 
 
@@ -78,27 +80,32 @@ def _active_template(template_id=None):
     return template
 
 
+def _filter_by_enum(stmt, column, enum_cls, arg):
+    value = request.args.get(arg)
+    if not value:
+        return stmt
+    try:
+        return stmt.where(column == enum_cls(value))
+    except ValueError:
+        raise ApiError(f"Некорректный {arg}", 422)
+
+
+def _apply_list_filters(stmt):
+    if int_arg("category_id") is not None:
+        stmt = stmt.where(Scenario.category_id == int_arg("category_id"))
+    if int_arg("difficulty") is not None:
+        stmt = stmt.where(Scenario.difficulty == int_arg("difficulty"))
+    stmt = _filter_by_enum(stmt, Scenario.status, ScenarioStatus, "status")
+    stmt = _filter_by_enum(stmt, Scenario.origin, ScenarioOrigin, "origin")
+    if request.args.get("q"):
+        stmt = stmt.where(Scenario.title.ilike(f"%{request.args['q'].strip()}%"))
+    return stmt
+
+
 @scenarios_bp.get("/scenarios")
 def list_scenarios():
     principal = require("scenario.read")
-    stmt = select(Scenario).order_by(Scenario.created_at.desc())
-
-    if request.args.get("category_id"):
-        stmt = stmt.where(Scenario.category_id == int(request.args["category_id"]))
-    if request.args.get("difficulty"):
-        stmt = stmt.where(Scenario.difficulty == int(request.args["difficulty"]))
-    if request.args.get("status"):
-        try:
-            stmt = stmt.where(Scenario.status == ScenarioStatus(request.args["status"]))
-        except ValueError:
-            raise ApiError("Некорректный status", 422)
-    if request.args.get("origin"):
-        try:
-            stmt = stmt.where(Scenario.origin == ScenarioOrigin(request.args["origin"]))
-        except ValueError:
-            raise ApiError("Некорректный origin", 422)
-    if request.args.get("q"):
-        stmt = stmt.where(Scenario.title.ilike(f"%{request.args['q'].strip()}%"))
+    stmt = _apply_list_filters(select(Scenario).order_by(Scenario.created_at.desc()))
 
     if is_student(principal):
         stmt = stmt.where(Scenario.status == ScenarioStatus.VALIDATED)
@@ -153,6 +160,13 @@ def generate_scenarios():
     )
     if not categories:
         raise ApiError("Не найдено ни одной категории из указанных", 422)
+
+    if not ai.is_enabled():
+        raise ApiError(
+            "Модуль ИИ отключен: автоматическая генерация сценариев недоступна",
+            503,
+            code="ai_disabled",
+        )
 
     template = _active_template(payload.template_id)
     drafts = ai.generate_scenarios(
@@ -286,7 +300,9 @@ def archive_scenario(scenario_id):
 @scenarios_bp.post("/scenarios/<uuid:scenario_id>/validate")
 def validate_scenario(scenario_id):
     principal = require("scenario.validate")
-    scenario = get_or_404(Scenario, scenario_id, "Сценарий")
+    scenario = _editable(get_or_404(Scenario, scenario_id, "Сценарий"), principal)
+    if scenario.status is ScenarioStatus.ARCHIVED:
+        raise ApiError("Сценарий в архиве, утверждать его нельзя", 409)
     payload = body(ScenarioValidateIn)
 
     validated = dict(scenario.validated_fields or {})
@@ -339,7 +355,7 @@ def validate_scenario(scenario_id):
 @scenarios_bp.post("/scenarios/<uuid:scenario_id>/corrections")
 def correct_scenario(scenario_id):
     principal = require("scenario.manage")
-    scenario = get_or_404(Scenario, scenario_id, "Сценарий")
+    scenario = _editable(get_or_404(Scenario, scenario_id, "Сценарий"), principal)
     payload = body(ScenarioCorrectionIn)
 
     correction = ScenarioCorrection(
@@ -351,12 +367,13 @@ def correct_scenario(scenario_id):
 
     if payload.apply_now:
         patch, explanation = ai.apply_correction(scenario, payload.comment)
-        for key, value in patch.items():
-            setattr(scenario, key, value)
-        scenario.status = ScenarioStatus.PENDING_REVIEW
-        scenario.validated_fields = {}
-        correction.applied = True
-        correction.applied_at = datetime.now(timezone.utc)
+        if patch:  # нечего править - утвержденный сценарий не трогаем
+            for key, value in patch.items():
+                setattr(scenario, key, value)
+            scenario.status = ScenarioStatus.PENDING_REVIEW
+            scenario.validated_fields = {}
+            correction.applied = True
+            correction.applied_at = datetime.now(timezone.utc)
         correction.result = {"patch": list(patch), "explanation": explanation}
 
     write_audit(
@@ -377,8 +394,8 @@ def correct_scenario(scenario_id):
 
 @scenarios_bp.post("/scenarios/<uuid:scenario_id>/grammar-check")
 def check_scenario_grammar(scenario_id):
-    require("scenario.manage")
-    scenario = get_or_404(Scenario, scenario_id, "Сценарий")
+    principal = require("scenario.manage")
+    scenario = _editable(get_or_404(Scenario, scenario_id, "Сценарий"), principal)
     issues = grammar.check_scenario(
         {
             "legend": scenario.legend,

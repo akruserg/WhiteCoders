@@ -7,19 +7,19 @@ DELETE /materials/{id}           - удаление неактуального �
 
 import hashlib
 import os
+import re
 import uuid as uuid_mod
 from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, request, send_file
 from sqlalchemy import select
-from werkzeug.utils import secure_filename
 
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.pagination import paginate
 from ..core.security import current_user, is_student, require, write_audit
 from ..models import IncidentCategory, Material
-from ._helpers import commit, get_or_404, item, ok
+from ._helpers import commit, get_or_404, int_arg, item, ok
 
 materials_bp = Blueprint("materials", __name__)
 
@@ -37,12 +37,19 @@ ALLOWED_MIME = {
 }
 
 
+def _download_name(material):
+    """Название материала + расширение вместо технического имени на диске."""
+    extension = os.path.splitext(material.file_path)[1]
+    title = re.sub(r'[\\/:*?"<>|\r\n]+', "_", material.title).strip(" .") or "material"
+    return title if title.lower().endswith(extension.lower()) else title + extension
+
+
 @materials_bp.get("/materials")
 def list_materials():
     principal = current_user()
     stmt = select(Material).order_by(Material.created_at.desc())
-    if request.args.get("category_id"):
-        stmt = stmt.where(Material.category_id == int(request.args["category_id"]))
+    if int_arg("category_id") is not None:
+        stmt = stmt.where(Material.category_id == int_arg("category_id"))
     if is_student(principal) and principal.service_scope:
         scope = [c.id for c in principal.service_scope]
         stmt = stmt.where(Material.category_id.in_(scope + [None]))
@@ -68,16 +75,28 @@ def upload_material():
             details={"allowed": sorted(set(ALLOWED_MIME.values()))},
         )
 
+    # тип файла из заголовка запроса подделать легко, сверяем его с расширением
+    extension = os.path.splitext(upload.filename or "")[1].lower().lstrip(".")
+    if extension != ALLOWED_MIME[mime]:
+        raise ApiError(
+            f"Расширение файла не соответствует его типу (ожидается .{ALLOWED_MIME[mime]})",
+            422,
+        )
+
     category_id = request.form.get("category_id")
     if category_id:
-        get_or_404(IncidentCategory, int(category_id), "Категория")
-        category_id = int(category_id)
+        try:
+            category_id = int(category_id)
+        except ValueError:
+            raise ApiError("category_id должен быть целым числом", 422)
+        get_or_404(IncidentCategory, category_id, "Категория")
     else:
         category_id = None
 
     base_dir = current_app.config["MATERIALS_DIR"]
     os.makedirs(base_dir, exist_ok=True)
-    stored_name = f"{uuid_mod.uuid4().hex}_{secure_filename(upload.filename or 'file')}"
+    # имя на диске не зависит от загруженного: русские названия secure_filename стирает
+    stored_name = f"{uuid_mod.uuid4().hex}.{ALLOWED_MIME[mime]}"
     path = os.path.join(base_dir, stored_name)
 
     digest = hashlib.sha256()
@@ -139,15 +158,18 @@ def index_material(material_id):
 
 @materials_bp.get("/materials/<uuid:material_id>/download")
 def download_material(material_id):
-    current_user()
+    principal = current_user()
     material = get_or_404(Material, material_id, "Материал")
+    if is_student(principal) and principal.service_scope and material.category_id:
+        if material.category_id not in {c.id for c in principal.service_scope}:
+            raise ApiError("Материал недоступен для вашего профиля событий", 403)
     if not os.path.exists(material.file_path):
         raise ApiError("Файл материала отсутствует на диске", 404)
     return send_file(
         material.file_path,
         mimetype=material.mime_type,
         as_attachment=True,
-        download_name=os.path.basename(material.file_path).split("_", 1)[-1],
+        download_name=_download_name(material),
     )
 
 

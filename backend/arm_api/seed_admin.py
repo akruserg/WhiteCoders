@@ -3,20 +3,26 @@ seed-скрипт
 
 наполняет справочники RBAC и создает первого администратора (если его нет)
 
-docker compose exec arm_api python seed_admin.py --username admin --password "password123" --full-name "Администратор"
+docker compose exec arm_api python seed_admin.py --username admin --full-name "Администратор"
+
+Пароль берется из переменной ADMIN_PASSWORD или из --password. Значения по
+умолчанию нет: пароль администратора не должен быть известен заранее.
 """
 
 import argparse
+import os
 import sys
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--username", default="admin")
-    parser.add_argument("--password", default="password123")
+    parser.add_argument("--password", default=os.environ.get("ADMIN_PASSWORD"))
     parser.add_argument("--full-name", default="Администратор")
     parser.add_argument("--email", default=None)
     args = parser.parse_args()
+    if not args.password:
+        parser.error("укажите --password или задайте ADMIN_PASSWORD")
 
     from arm_api import create_app
     from arm_api.core.extensions import db
@@ -33,9 +39,7 @@ def main():
 
     with app.app_context():
         # 1. permissions
-        existing_perm_codes = set(
-            db.session.execute(select(Permission.code)).scalars()
-        )
+        existing_perm_codes = set(db.session.execute(select(Permission.code)).scalars())
         for code, description in PERMISSIONS.items():
             if code not in existing_perm_codes:
                 db.session.add(Permission(code=code, description=description))
@@ -50,9 +54,11 @@ def main():
         }
         roles_by_code = {}
         for code, role_id in role_codes.items():
-            role = db.session.execute(
-                select(Role).where(Role.code == code)
-            ).scalars().first()
+            role = (
+                db.session.execute(select(Role).where(Role.code == code))
+                .scalars()
+                .first()
+            )
             if role is None:
                 role = Role(id=role_id, code=code, name=role_names[code])
                 db.session.add(role)
@@ -73,9 +79,11 @@ def main():
         print("[seed] permissions/roles/role_permissions готовы")
 
         # 4. первый admin-пользователь
-        existing_user = db.session.execute(
-            select(User).where(User.username == args.username)
-        ).scalars().first()
+        existing_user = (
+            db.session.execute(select(User).where(User.username == args.username))
+            .scalars()
+            .first()
+        )
         if existing_user is not None:
             print(f"[seed] пользователь {args.username!r} уже существует, пропуск")
             return
@@ -92,7 +100,7 @@ def main():
         )
         db.session.add(user)
         db.session.commit()
-        print(f"[seed] создан администратор: {args.username} / {args.password}")
+        print(f"[seed] создан администратор: {args.username}")
 
 
 if __name__ == "__main__":

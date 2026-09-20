@@ -29,7 +29,7 @@ from ..core.security import (
 )
 from ..models import Group, IncidentCategory, Permission, Role, User
 from ..schemas import GroupIn, MembersIn, PasswordResetIn, UserCreate, UserUpdate
-from ._helpers import body, commit, get_or_404, item, items, ok
+from ._helpers import body, commit, get_or_404, item, items, ok, uuid_arg
 
 users_bp = Blueprint("users", __name__)
 
@@ -70,8 +70,10 @@ def _user_view(user):
 
 @users_bp.get("/users")
 def list_users():
-    require("user.manage", "session.manage")
+    principal = require("user.manage", "session.manage")
     stmt = select(User).join(Role, Role.id == User.role_id)
+    if not is_admin(principal):  # преподаватель видит только обучающихся
+        stmt = stmt.where(Role.code == "student")
 
     role_code = request.args.get("role")
     if role_code:
@@ -88,7 +90,7 @@ def list_users():
         stmt = stmt.where(
             or_(User.full_name.ilike(pattern), User.username.ilike(pattern))
         )
-    group_id = request.args.get("group_id")
+    group_id = uuid_arg("group_id")
     if group_id:
         group = get_or_404(Group, group_id, "Группа")
         stmt = stmt.where(User.id.in_([m.id for m in group.members] or [None]))
@@ -162,6 +164,12 @@ def update_user(user_id):
     user = get_or_404(User, user_id, "Пользователь")
     payload = body(UserUpdate)
 
+    if user.id == principal.id and (
+        payload.is_active is False
+        or (payload.role_code and payload.role_code != user.role.code)
+    ):
+        raise ApiError("Нельзя отключить или понизить собственную учетную запись", 409)
+
     changed = {}
     for name in ("full_name", "email", "is_active", "mfa_enabled"):
         value = getattr(payload, name, None)
@@ -171,15 +179,23 @@ def update_user(user_id):
     if payload.role_code:
         user.role_id = _role_by_code(payload.role_code).id
         changed["role_code"] = payload.role_code
+    new_secret = None
     if payload.mfa_enabled and not user.mfa_secret:
-        user.mfa_secret = generate_mfa_secret()
+        new_secret = user.mfa_secret = generate_mfa_secret()
     if payload.category_ids is not None:
         _set_scope(user, payload.category_ids)
         changed["category_ids"] = payload.category_ids
 
     write_audit(db.session, request, principal, "user.update", "user", user.id, changed)
     commit()
-    return ok(_user_view(user))
+    response = _user_view(user)
+    if new_secret:  # без выдачи секрета включенный MFA заблокировал бы вход
+        response["mfa_secret"] = new_secret
+        response["mfa_uri"] = (
+            f"otpauth://totp/ARM-112:{user.username}?secret={new_secret}"
+            f"&issuer=ARM-112"
+        )
+    return ok(response)
 
 
 @users_bp.post("/users/<uuid:user_id>/block")
@@ -263,11 +279,9 @@ def list_groups():
 def create_group():
     principal = require("user.manage", "session.manage")
     payload = body(GroupIn)
-    group = Group(
-        name=payload.name,
-        teacher_id=payload.teacher_id
-        or (None if is_admin(principal) else principal.id),
-    )
+    # преподаватель создает группы только на себя
+    teacher_id = payload.teacher_id if is_admin(principal) else principal.id
+    group = Group(name=payload.name, teacher_id=teacher_id)
     db.session.add(group)
     db.session.flush()
     if payload.member_ids:
@@ -291,8 +305,13 @@ def create_group():
 
 @users_bp.get("/groups/<uuid:group_id>")
 def get_group(group_id):
-    current_user()
+    principal = current_user()
     group = get_or_404(Group, group_id, "Группа")
+    if principal.role.code == "student":
+        if principal.id not in {m.id for m in group.members}:
+            raise ApiError("Вы не состоите в этой группе", 403)
+    elif not is_admin(principal) and group.teacher_id != principal.id:
+        raise ApiError("Группа другого преподавателя", 403)
     return ok(
         {
             **group.to_dict(),
@@ -363,7 +382,7 @@ def remove_member(group_id, user_id):
 
 @users_bp.delete("/groups/<uuid:group_id>")
 def delete_group(group_id):
-    principal = require("user.manage")
+    principal = require("user.manage", "session.manage")
     group = _editable_group(get_or_404(Group, group_id, "Группа"), principal)
     if group.sessions:
         raise ApiError("Нельзя удалить группу, по которой проводились занятия", 409)

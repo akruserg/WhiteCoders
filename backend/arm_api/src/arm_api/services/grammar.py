@@ -1,6 +1,7 @@
 import re
 
-### полный кринж переписать!!!
+# Проверка построена на простых правилах оформления записи (пробелы, регистр,
+# парные скобки, смешение алфавитов). Орфографию по словарю она не проверяет.
 
 DEFAULT_RULES = {
     "double_space": True,  # двойные пробелы
@@ -32,112 +33,143 @@ def _issue(field_key, message, actual=None, expected=None, position=None, severi
     }
 
 
+def _double_space(text, key, rules):
+    match = re.search(r"\S {2,}\S", text)
+    if not match:
+        return []
+    return [
+        _issue(
+            key,
+            "Лишние пробелы между словами",
+            actual=match.group(0),
+            expected=" ".join(match.group(0).split()),
+            position=match.start(),
+        )
+    ]
+
+
+def _space_before_punct(text, key, rules):
+    match = re.search(r"\s+([" + re.escape(_PUNCT) + r"])", text)
+    if not match:
+        return []
+    return [
+        _issue(
+            key,
+            "Пробел перед знаком препинания",
+            actual=match.group(0),
+            expected=match.group(1),
+            position=match.start(),
+        )
+    ]
+
+
+def _no_space_after_punct(text, key, rules):
+    match = re.search(r"([" + re.escape(_PUNCT) + r"])(?=[А-Яа-яЁёA-Za-z])", text)
+    if not match:
+        return []
+    return [
+        _issue(
+            key,
+            "Отсутствует пробел после знака препинания",
+            actual=text[match.start() : match.start() + 3],
+            position=match.start(),
+        )
+    ]
+
+
+def _capital_first(text, key, rules):
+    stripped = text.lstrip()
+    if not (stripped and stripped[0].isalpha() and stripped[0].islower()):
+        return []
+    return [
+        _issue(
+            key,
+            "Предложение должно начинаться с заглавной буквы",
+            actual=stripped[:20],
+            expected=stripped[0].upper() + stripped[1:20],
+            position=0,
+        )
+    ]
+
+
+def _trailing_punct(text, key, rules):
+    if text.rstrip()[-1:] in set(_PUNCT):
+        return []
+    return [
+        _issue(
+            key,
+            "В конце записи отсутствует знак препинания",
+            actual=text.rstrip()[-10:],
+            expected=".",
+        )
+    ]
+
+
+def _repeated_word(text, key, rules):
+    words = _WORD_RE.findall(text)
+    for previous, word in zip(words, words[1:]):
+        if word.lower() == previous.lower() and len(word) > 2:
+            return [_issue(key, f"Повтор слова «{word}»", actual=word)]
+    return []
+
+
+def _latin_in_russian(text, key, rules):
+    for word in _WORD_RE.findall(text):
+        if _CYR_RE.search(word) and _LAT_RE.search(word):
+            return [
+                _issue(
+                    key,
+                    f"Смешение кириллицы и латиницы в слове «{word}»",
+                    actual=word,
+                    severity=2,
+                )
+            ]
+    return []
+
+
+def _unbalanced_brackets(text, key, rules):
+    if text.count("(") == text.count(")") and text.count("«") == text.count("»"):
+        return []
+    return [_issue(key, "Непарные скобки или кавычки", actual=text[:40])]
+
+
+def _min_words(text, key, rules):
+    minimum = int(rules.get("min_words") or 0)
+    if not minimum or len(_WORD_RE.findall(text)) >= minimum:
+        return []
+    return [
+        _issue(
+            key,
+            f"Слишком короткая запись (минимум {minimum} сл.)",
+            actual=text[:40],
+            severity=2,
+        )
+    ]
+
+
+# порядок правил определяет порядок замечаний в ответе
+_RULES = (
+    ("double_space", _double_space),
+    ("space_before_punct", _space_before_punct),
+    ("no_space_after_punct", _no_space_after_punct),
+    ("capital_first", _capital_first),
+    ("trailing_punct", _trailing_punct),
+    ("repeated_word", _repeated_word),
+    ("latin_in_russian", _latin_in_russian),
+    ("unbalanced_brackets", _unbalanced_brackets),
+    ("min_words", _min_words),
+)
+
+
 def check_text(text, field_key=None, rules=None):
     rules = {**DEFAULT_RULES, **(rules or {})}
-    issues = []
     if not isinstance(text, str) or not text.strip():
-        return issues
+        return []
 
-    if rules["double_space"]:
-        match = re.search(r"\S {2,}\S", text)
-        if match:
-            issues.append(
-                _issue(
-                    field_key,
-                    "Лишние пробелы между словами",
-                    actual=match.group(0),
-                    expected=" ".join(match.group(0).split()),
-                    position=match.start(),
-                )
-            )
-
-    if rules["space_before_punct"]:
-        match = re.search(r"\s+([" + re.escape(_PUNCT) + r"])", text)
-        if match:
-            issues.append(
-                _issue(
-                    field_key,
-                    "Пробел перед знаком препинания",
-                    actual=match.group(0),
-                    expected=match.group(1),
-                    position=match.start(),
-                )
-            )
-
-    if rules["no_space_after_punct"]:
-        match = re.search(r"([" + re.escape(_PUNCT) + r"])(?=[А-Яа-яЁёA-Za-z])", text)
-        if match:
-            issues.append(
-                _issue(
-                    field_key,
-                    "Отсутствует пробел после знака препинания",
-                    actual=text[match.start() : match.start() + 3],
-                    position=match.start(),
-                )
-            )
-
-    if rules["capital_first"]:
-        stripped = text.lstrip()
-        if stripped and stripped[0].isalpha() and stripped[0].islower():
-            issues.append(
-                _issue(
-                    field_key,
-                    "Предложение должно начинаться с заглавной буквы",
-                    actual=stripped[:20],
-                    expected=stripped[0].upper() + stripped[1:20],
-                    position=0,
-                )
-            )
-
-    if rules["trailing_punct"] and text.rstrip()[-1:] not in set(_PUNCT):
-        issues.append(
-            _issue(
-                field_key,
-                "В конце записи отсутствует знак препинания",
-                actual=text.rstrip()[-10:],
-                expected=".",
-            )
-        )
-
-    if rules["repeated_word"]:
-        words = _WORD_RE.findall(text)
-        for i in range(1, len(words)):
-            if words[i].lower() == words[i - 1].lower() and len(words[i]) > 2:
-                issues.append(
-                    _issue(field_key, f"Повтор слова «{words[i]}»", actual=words[i])
-                )
-                break
-
-    if rules["latin_in_russian"]:
-        for word in _WORD_RE.findall(text):
-            if _CYR_RE.search(word) and _LAT_RE.search(word):
-                issues.append(
-                    _issue(
-                        field_key,
-                        f"Смешение кириллицы и латиницы в слове «{word}»",
-                        actual=word,
-                        severity=2,
-                    )
-                )
-                break
-
-    if rules["unbalanced_brackets"]:
-        if text.count("(") != text.count(")") or text.count("«") != text.count("»"):
-            issues.append(
-                _issue(field_key, "Непарные скобки или кавычки", actual=text[:40])
-            )
-
-    min_words = int(rules.get("min_words") or 0)
-    if min_words and len(_WORD_RE.findall(text)) < min_words:
-        issues.append(
-            _issue(
-                field_key,
-                f"Слишком короткая запись (минимум {min_words} сл.)",
-                actual=text[:40],
-                severity=2,
-            )
-        )
-
+    issues = []
+    for name, rule in _RULES:
+        if rules[name]:
+            issues.extend(rule(text, field_key, rules))
     return issues
 
 

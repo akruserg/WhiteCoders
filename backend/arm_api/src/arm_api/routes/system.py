@@ -24,7 +24,7 @@ from sqlalchemy import func, select, text
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.pagination import paginate
-from ..core.security import require, write_audit
+from ..core.security import audit_entry_hash, require, write_audit
 from ..models import (
     Alert,
     AlertStatus,
@@ -41,7 +41,7 @@ from ..models import (
 from ..schemas import AlertActionIn, BackupCreateIn, SettingUpdateIn
 from ..services import integrations, reporting
 from ..services.backup import run_backup
-from ._helpers import body, commit, get_or_404, item, ok
+from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
 system_bp = Blueprint("system", __name__)
 
@@ -58,6 +58,18 @@ def _db_state():
         return {"status": "down", "error": str(exc)[:200]}
 
 
+def _voip_state():
+    if not integrations.voip_available():
+        return {"status": "disabled"}
+    health = integrations.voip_health()
+    return {
+        "status": "up" if health.get("available") else "down",
+        "max_latency_ms": current_app.config["VOIP_MAX_LATENCY_MS"],
+        "pool": health.get("pool"),
+        "error": health.get("error"),
+    }
+
+
 @system_bp.get("/system/health")
 def health():
     require("system.monitor")
@@ -65,10 +77,7 @@ def health():
     components = {
         "api": {"status": "up"},
         "database": database,
-        "voip": {
-            "status": "up" if current_app.config["VOIP_ENABLED"] else "disabled",
-            "max_latency_ms": current_app.config["VOIP_MAX_LATENCY_MS"],
-        },
+        "voip": _voip_state(),
         "reports": {"status": "up", "formats": reporting.available_formats()},
     }
     overall = (
@@ -186,34 +195,52 @@ def update_setting(key):
 def audit_log():
     require("audit.read")
     stmt = select(AuditLog).order_by(AuditLog.ts.desc())
-    if request.args.get("user_id"):
-        stmt = stmt.where(AuditLog.user_id == request.args["user_id"])
+    if uuid_arg("user_id"):
+        stmt = stmt.where(AuditLog.user_id == uuid_arg("user_id"))
     if request.args.get("action"):
         stmt = stmt.where(AuditLog.action == request.args["action"])
     if request.args.get("object_type"):
         stmt = stmt.where(AuditLog.object_type == request.args["object_type"])
     if request.args.get("since"):
-        stmt = stmt.where(AuditLog.ts >= request.args["since"])
+        try:
+            since = datetime.fromisoformat(request.args["since"])
+        except ValueError:
+            raise ApiError("since должен быть датой ISO 8601", 422)
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        stmt = stmt.where(AuditLog.ts >= since)
     return ok(paginate(stmt))
 
 
 @system_bp.get("/system/audit/verify")
 def verify_audit():
     require("audit.read")
-    limit = min(int(request.args.get("limit", 1000)), 10000)
+    try:
+        limit = min(max(int(request.args.get("limit", 1000)), 1), 10000)
+    except ValueError:
+        raise ApiError("limit должен быть целым числом", 422)
     entries = list(
         db.session.execute(
             select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
         ).scalars()
     )[::-1]
 
-    broken = []
+    broken, tampered = [], []
     previous = None
     for entry in entries:
         if previous is not None and entry.prev_hash != previous.entry_hash:
-            broken.append(entry.id)
+            broken.append(entry.id)  # цепочка разорвана: запись удалена или вставлена
+        if audit_entry_hash(entry) != entry.entry_hash:
+            tampered.append(entry.id)  # содержимое записи изменено
         previous = entry
-    return ok({"checked": len(entries), "broken_links": broken, "intact": not broken})
+    return ok(
+        {
+            "checked": len(entries),
+            "broken_links": broken,
+            "tampered": tampered,
+            "intact": not broken and not tampered,
+        }
+    )
 
 
 @system_bp.get("/system/events")
@@ -296,6 +323,21 @@ def voip_status():
     return ok(integrations.voip_health())
 
 
+def _set_voip_enabled(principal, enabled):
+    """Включатель VoIP хранится в БД, чтобы его видели все воркеры API."""
+    setting = db.session.get(SystemSetting, integrations.VOIP_SETTING_KEY)
+    if setting is None:
+        setting = SystemSetting(
+            key=integrations.VOIP_SETTING_KEY,
+            scope=SettingScope.VOIP,
+            description="Принудительно включить или выключить VoIP-звонки",
+            default_value=current_app.config["VOIP_ENABLED"],
+        )
+        db.session.add(setting)
+    setting.value = enabled
+    setting.updated_by = principal.id
+
+
 @system_bp.post("/system/services/<service>/<action>")
 def manage_service(service, action):
     principal = require("system.manage")
@@ -309,12 +351,17 @@ def manage_service(service, action):
             409,
         )
 
-    if service == "voip":
-        state = {"start": True, "stop": False, "restart": True}[action]
-        current_app.config["VOIP_ENABLED"] = state
-        details = {"voip_enabled": state, "available": integrations.voip_available()}
-    else:
-        details = {"requested": action}
+    if service != "voip":
+        raise ApiError(
+            f"Сервисом «{service}» управляет оркестратор (docker compose), "
+            "из API он не запускается и не останавливается",
+            501,
+            code="not_implemented",
+        )
+
+    enabled = action != "stop"
+    _set_voip_enabled(principal, enabled)
+    details = {"voip_enabled": enabled, "available": integrations.voip_available()}
 
     db.session.add(
         SystemEvent(

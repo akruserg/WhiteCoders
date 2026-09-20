@@ -1,5 +1,6 @@
 from .auth import auth_bp
 from .catalog import catalog_bp
+from .internal import internal_bp
 from .materials import materials_bp
 from .meta import meta_bp
 from .reports import reports_bp
@@ -19,6 +20,7 @@ API_BLUEPRINTS = (
     results_bp,
     reports_bp,
     system_bp,
+    internal_bp,
 )
 
 

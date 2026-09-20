@@ -74,6 +74,7 @@ class Config:
         "/var/lib/arm112/backups",
     )
     BACKUP_HOUR_UTC = _int("BACKUP_HOUR_UTC", 3)
+    BACKUPS_KEEP = _int("BACKUPS_KEEP", 30)
 
     # VoIP
 

@@ -83,6 +83,28 @@ def _dump_database(file_path):
         )
 
 
+def _prune_old_backups():
+    """Удаляет файлы старых копий, оставляя BACKUPS_KEEP последних."""
+    keep = int(current_app.config.get("BACKUPS_KEEP", 30))
+    old = (
+        db.session.execute(
+            select(Backup)
+            .where(Backup.status == "success", Backup.file_path.is_not(None))
+            .order_by(Backup.started_at.desc())
+            .offset(keep)
+        )
+        .scalars()
+        .all()
+    )
+    for backup in old:
+        try:
+            os.remove(backup.file_path)
+        except OSError:
+            pass
+        backup.file_path = None
+        backup.error = "файл удален по политике хранения"
+
+
 def run_backup(kind="full", automatic=True, created_by=None):
     kind = kind if kind in {KIND_FULL, KIND_INCREMENTAL} else KIND_FULL
     backup = Backup(
@@ -113,6 +135,8 @@ def run_backup(kind="full", automatic=True, created_by=None):
             except OSError:
                 pass
     backup.finished_at = _now()
+    if backup.status == "success":
+        _prune_old_backups()
 
     log_event(
         "backup",

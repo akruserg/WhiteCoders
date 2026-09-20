@@ -24,7 +24,7 @@ def create_app(config_object=Config):
     db.init_app(app)
     migrate.init_app(app, db)
 
-    from . import models
+    from . import models  # noqa: F401  (регистрирует модели в SQLAlchemy)
 
     register_routes(app)
     register_error_handlers(app, db)
@@ -66,7 +66,8 @@ def _register_request_hooks(app):
         if origin and ("*" in origins or origin in origins):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
-            response.headers["Access-Control-Allow-Credentials"] = "true"
+            if origin in origins:  # учетные данные - только явно разрешенным
+                response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Headers"] = (
                 "Authorization, Content-Type, X-Request-Id"
             )

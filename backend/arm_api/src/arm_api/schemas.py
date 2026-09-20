@@ -48,44 +48,54 @@ class Field:
         self.nullable = nullable
 
     def _cast(self, name, value):
-        t = self.type
-        if t == "str":
-            if not isinstance(value, str):
-                raise ValueError("ожидается строка")
-            return value.strip()
-        if t == "int":
-            if isinstance(value, bool) or not isinstance(value, (int, str)):
-                raise ValueError("ожидается целое число")
-            return int(value)
-        if t == "float":
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                raise ValueError("ожидается число")
-            return float(value)
-        if t == "bool":
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "on"}
-            raise ValueError("ожидается true/false")
-        if t == "uuid":
-            try:
-                return uuid_mod.UUID(str(value))
-            except ValueError:
-                raise ValueError("ожидается UUID")
-        if t == "dict":
-            if not isinstance(value, dict):
-                raise ValueError("ожидается объект")
+        caster = getattr(self, f"_cast_{self.type}", None)
+        if caster is None:
+            raise ValueError(f"неизвестный тип {self.type}")
+        return caster(name, value)
+
+    def _cast_str(self, name, value):
+        if not isinstance(value, str):
+            raise ValueError("ожидается строка")
+        return value.strip()
+
+    def _cast_int(self, name, value):
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise ValueError("ожидается целое число")
+        return int(value)
+
+    def _cast_float(self, name, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError("ожидается число")
+        return float(value)
+
+    def _cast_bool(self, name, value):
+        if isinstance(value, bool):
             return value
-        if t == "list":
-            if not isinstance(value, list):
-                raise ValueError("ожидается массив")
-            if self.item_type:
-                item_field = Field(self.item_type)
-                return [item_field._cast(name, item) for item in value]
-            return value
-        if t == "any":
-            return value
-        raise ValueError(f"неизвестный тип {t}")
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        raise ValueError("ожидается true/false")
+
+    def _cast_uuid(self, name, value):
+        try:
+            return uuid_mod.UUID(str(value))
+        except ValueError:
+            raise ValueError("ожидается UUID")
+
+    def _cast_dict(self, name, value):
+        if not isinstance(value, dict):
+            raise ValueError("ожидается объект")
+        return value
+
+    def _cast_list(self, name, value):
+        if not isinstance(value, list):
+            raise ValueError("ожидается массив")
+        if self.item_type:
+            item_field = Field(self.item_type)
+            return [item_field._cast(name, item) for item in value]
+        return value
+
+    def _cast_any(self, name, value):
+        return value
 
     def validate(self, name, value):
         if value is None:
@@ -241,6 +251,14 @@ class CategoryIn(Schema):
     is_active = Field("bool", default=True)
 
 
+class CategoryUpdate(Schema):
+    code = Field("str", max_len=32)
+    name = Field("str", max_len=128)
+    parent_id = Field("int", nullable=True)
+    service_code = Field("str", max_len=64, nullable=True)
+    is_active = Field("bool")
+
+
 class CardTemplateIn(Schema):
     code = Field("str", required=True, max_len=64)
     name = Field("str", required=True, max_len=255)
@@ -261,6 +279,22 @@ class GradingProfileIn(Schema):
     syntax_rules = Field("dict", default=dict)
     error_weights = Field("dict", default=dict)
     is_default = Field("bool", default=False)
+
+
+class GradingProfileUpdate(Schema):
+    name = Field("str", max_len=128)
+    category_id = Field("int", nullable=True)
+    max_content_errors = Field("int", min=0, max=100)
+    max_grammar_errors = Field("int", min=0, max=100)
+    max_procedure_errors = Field("int", min=0, max=100)
+    max_missing_fields = Field("int", min=0, max=100)
+    default_time_limit_sec = Field("int", min=5, max=3600)
+    time_overrun_tolerance_pct = Field("int", min=0, max=100)
+    pass_score = Field("float", min=0, max=100)
+    grammar_check_enabled = Field("bool")
+    syntax_rules = Field("dict")
+    error_weights = Field("dict")
+    is_default = Field("bool")
 
 
 class ScenarioIn(Schema):
@@ -396,6 +430,18 @@ class AlertActionIn(Schema):
 
 class BackupCreateIn(Schema):
     kind = Field("str", default="full", choices=["full", "incremental"])
+
+
+class VoipEventIn(Schema):
+    event = Field("str", required=True, choices=["answered", "finished", "no_answer"])
+    call_id = Field("str", required=True, min_len=1, max_len=128)
+    attempt_id = Field("str", nullable=True, max_len=64)
+    extension = Field("str", nullable=True, max_len=32)
+    at = Field("float", nullable=True)
+    hangup_cause = Field("str", nullable=True, max_len=128)
+    rtt_ms = Field("float", nullable=True)
+    rtt_max_ms = Field("float", nullable=True)
+    latency_ok = Field("bool", nullable=True)
 
 
 class PageQuery(Schema):
