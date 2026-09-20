@@ -111,6 +111,20 @@ class Config:
         )
     )
 
+    # AI: локальная модель YandexGPT-5-Lite-8B-instruct за сервером llama.cpp
+
+    AI_ENABLED = _bool("AI_ENABLED", "0")
+    AI_SCORING_ENABLED = _bool("AI_SCORING_ENABLED", "0")
+    AI_BASE_URL = os.environ.get("AI_BASE_URL", "http://llm:8080").strip().rstrip("/")
+    AI_MODEL_NAME = os.environ.get(
+        "AI_MODEL_NAME", "YandexGPT-5-Lite-8B-instruct-Q4_K_M"
+    ).strip()
+    AI_TIMEOUT_SEC = float(os.environ.get("AI_TIMEOUT_SEC", "240"))
+    AI_JUDGE_TIMEOUT_SEC = float(os.environ.get("AI_JUDGE_TIMEOUT_SEC", "20"))
+    AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 1500)
+    AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.5"))
+    AI_MAX_SCENARIOS_PER_REQUEST = _int("AI_MAX_SCENARIOS_PER_REQUEST", 5)
+
     # CORS
 
     CORS_ORIGINS = [
@@ -118,6 +132,10 @@ class Config:
         for origin in _required("CORS_ORIGINS").split(",")
         if origin.strip()
     ]
+
+    # logging: json (по ТЗ) или text для отладки
+    LOG_FORMAT = os.environ.get("LOG_FORMAT", "json").strip().lower()
+    LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
 
     # api
 

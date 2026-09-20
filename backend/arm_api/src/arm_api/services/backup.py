@@ -7,17 +7,18 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.engine.url import make_url
 
 from ..core.extensions import db
 from ..core.security import log_event
-from ..models import Backup
+from ..models import AuditLog, Backup
+from . import settings
 
 logger = logging.getLogger(__name__)
 
 KIND_FULL = "full"
-KIND_INCREMENTAL = "incremental"
+MIN_AUDIT_RETENTION_DAYS = 183  # ТЗ: журналы безопасности не менее 6 месяцев
 
 
 def _now():
@@ -85,7 +86,7 @@ def _dump_database(file_path):
 
 def _prune_old_backups():
     """Удаляет файлы старых копий, оставляя BACKUPS_KEEP последних."""
-    keep = int(current_app.config.get("BACKUPS_KEEP", 30))
+    keep = int(settings.get("backup.keep_count", current_app.config["BACKUPS_KEEP"]))
     old = (
         db.session.execute(
             select(Backup)
@@ -106,7 +107,7 @@ def _prune_old_backups():
 
 
 def run_backup(kind="full", automatic=True, created_by=None):
-    kind = kind if kind in {KIND_FULL, KIND_INCREMENTAL} else KIND_FULL
+    kind = KIND_FULL  # pg_dump всегда полный, инкрементальных копий нет
     backup = Backup(
         kind=kind,
         is_automatic=automatic,
@@ -200,13 +201,74 @@ def run_loop():
         with app.app_context():
             try:
                 run_daily_backup_if_due()
+                purge_old_audit()
             except Exception:
-                logger.exception("Ежедневный бэкап завершился ошибкой")
+                logger.exception("Ежедневное задание завершилось ошибкой")
+
+
+def restore_backup(file_path):
+    """Восстанавливает БД из копии pg_dump (формат custom).
+
+    Заменяет существующие объекты. Запускать при остановленном API:
+        docker compose exec arm_api python -m arm_api.services.backup restore <файл>
+    """
+    if shutil.which("pg_restore") is None:
+        raise RuntimeError("pg_restore недоступен в контейнере API")
+    if not os.path.exists(file_path):
+        raise RuntimeError(f"Файл копии не найден: {file_path}")
+    url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
+    env = os.environ.copy()
+    if url.password:
+        env["PGPASSWORD"] = url.password
+    command = [
+        "pg_restore", "--clean", "--if-exists", "--no-owner",
+        "--host", url.host or "localhost",
+        "--port", str(url.port or 5432),
+        "--username", url.username or "postgres",
+        "--dbname", url.database,
+        file_path,
+    ]  # fmt: skip
+    completed = subprocess.run(
+        command, check=False, capture_output=True, timeout=3600, env=env
+    )
+    if completed.returncode != 0:
+        stderr = (completed.stderr or b"").decode("utf-8", errors="replace")[:1000]
+        raise RuntimeError(
+            stderr or f"pg_restore завершился с кодом {completed.returncode}"
+        )
+
+
+def purge_old_audit():
+    """Удаляет записи аудита старше срока хранения (не меньше 6 месяцев по ТЗ)."""
+    days = max(
+        MIN_AUDIT_RETENTION_DAYS,
+        int(
+            settings.get(
+                "audit.retention_days", current_app.config["AUDIT_RETENTION_DAYS"]
+            )
+        ),
+    )
+    cutoff = _now() - timedelta(days=days)
+    deleted = db.session.execute(delete(AuditLog).where(AuditLog.ts < cutoff)).rowcount
+    db.session.commit()
+    if deleted:
+        logger.info("Аудит: удалено %s записей старше %s дн.", deleted, days)
+    return deleted
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
-    run_loop()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Резервное копирование БД")
+    parser.add_argument("command", choices=["run", "restore"], nargs="?", default="run")
+    parser.add_argument("file", nargs="?", help="файл копии для restore")
+    args = parser.parse_args()
+
+    if args.command == "restore":
+        from arm_api import app
+
+        with app.app_context():
+            restore_backup(args.file)
+        print("Восстановление завершено. Перезапустите API.")
+    else:
+        run_loop()

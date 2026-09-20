@@ -429,7 +429,7 @@ class AlertActionIn(Schema):
 
 
 class BackupCreateIn(Schema):
-    kind = Field("str", default="full", choices=["full", "incremental"])
+    kind = Field("str", default="full", choices=["full"])
 
 
 class VoipEventIn(Schema):

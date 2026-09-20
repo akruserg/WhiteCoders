@@ -201,7 +201,7 @@ def generate_scenarios():
         {
             "count": len(created),
             "categories": payload.category_ids,
-            "model": ai.MODEL_NAME,
+            "model": ai.model_name(),
         },
     )
     commit()
@@ -209,7 +209,7 @@ def generate_scenarios():
         {
             "items": [_view(s, principal) for s in created],
             "total": len(created),
-            "model": ai.MODEL_NAME,
+            "model": ai.model_name(),
             "note": "Сценарии требуют подтверждения преподавателем перед занятием",
         },
         201,

@@ -16,7 +16,7 @@ from ..core.extensions import db
 from ..core.security import log_event
 from ..models import Call, CallStatus
 from ..schemas import VoipEventIn
-from ..services import alerts
+from ..services import alerts, settings
 from ._helpers import body, commit, ok
 
 internal_bp = Blueprint("internal", __name__)
@@ -58,7 +58,9 @@ def _apply_finished(call, payload, when):
 def _report_latency(call, payload):
     if payload.latency_ok is not False:
         return
-    limit = current_app.config["VOIP_MAX_LATENCY_MS"]
+    limit = settings.get(
+        "voip.max_latency_ms", current_app.config["VOIP_MAX_LATENCY_MS"]
+    )
     log_event(
         "voip",
         "warning",

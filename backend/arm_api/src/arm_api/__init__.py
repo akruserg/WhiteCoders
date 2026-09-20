@@ -1,4 +1,3 @@
-import logging
 import uuid
 
 from flask import Flask, g, jsonify, request
@@ -6,6 +5,7 @@ from flask import Flask, g, jsonify, request
 from .core.config import Config
 from .core.errors import register_error_handlers
 from .core.extensions import db, migrate
+from .core.logging import setup_logging
 from .routes import register_routes
 
 
@@ -16,10 +16,7 @@ def create_app(config_object=Config):
     app.json.sort_keys = False
     app.url_map.strict_slashes = False
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    setup_logging(app.config["LOG_FORMAT"], app.config["LOG_LEVEL"])
 
     db.init_app(app)
     migrate.init_app(app, db)

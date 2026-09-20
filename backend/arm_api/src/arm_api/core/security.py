@@ -43,7 +43,7 @@ ROLE_PERMISSIONS = {
         "audit.read",
         "catalog.manage",
         "scenario.read",
-        "report.read.any",
+        "report.create",  # только системные отчеты, см. ADMIN_REPORT_KINDS
     ],
     "teacher": [
         "scenario.read",
@@ -65,6 +65,11 @@ ROLE_PERMISSIONS = {
         "scenario.read",
     ],
 }
+
+
+# Администратору доступны только отчеты о системе: результаты обучающихся
+# (персональные данные) он видеть без необходимости не должен
+ADMIN_REPORT_KINDS = {"system_usage", "security_audit"}
 
 
 def hash_password(password):

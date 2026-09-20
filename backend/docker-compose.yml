@@ -1,3 +1,5 @@
 include:
   - arm_api/docker-compose.yml
   - arm_voip/docker-compose.yml
+  - llm/docker-compose.yml
+  - proxy/docker-compose.yml

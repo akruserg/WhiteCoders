@@ -12,6 +12,7 @@ DELETE /sessions/{id}/participants/{uid}  - исключить обучающе�
 POST /sessions/{id}/attempts/next         - получить случайную карточку + вызов
 POST /attempts/{id}/answer                - принять входящий вызов
 POST /attempts/{id}/messages              - реплика оператора в диалоге
+PUT  /attempts/{id}/draft                 - сохранить черновик карточки
 POST /attempts/{id}/submit                - отправить заполненную карточку
 GET  /attempts/{id}                       - результат с разбором ошибок
 POST /attempts/{id}/grade                 - экспертная оценка преподавателем
@@ -59,7 +60,7 @@ from ..schemas import (
     SessionUpdate,
     SubmitIn,
 )
-from ..services import grammar, integrations, scoring
+from ..services import ai, grammar, integrations, scoring
 from ._helpers import body, commit, get_or_404, ok, uuid_arg
 
 sessions_bp = Blueprint("sessions", __name__)
@@ -146,6 +147,10 @@ def _pick_scenario(session, user):
         Scenario.difficulty.between(session.difficulty_min, session.difficulty_max),
         Scenario.origin.in_(_origins_for(session.question_source)),
     )
+
+    if session.mode is SessionMode.CARD_ACTIONS:
+        # оцениваются шаги работы с карточкой, значит эталон обязан их содержать
+        stmt = stmt.where(db.func.jsonb_array_length(Scenario.reference_actions) > 0)
 
     categories = [c.id for c in session.categories]
     scope = [c.id for c in user.service_scope]
@@ -674,6 +679,32 @@ def list_messages(attempt_id):
     )
 
 
+@sessions_bp.put("/attempts/<uuid:attempt_id>/draft")
+def save_draft(attempt_id):
+    """Промежуточное сохранение введенного и выполненных действий (ТЗ: «сохранять
+    промежуточные результаты»). Оценки не вызывает, таймер не останавливает."""
+    principal = require("attempt.submit")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
+    if attempt.user_id != principal.id:
+        raise ApiError("Карточка другого обучающегося", 403)
+    if attempt.status is not AttemptStatus.IN_PROGRESS:
+        raise ApiError(
+            "Черновик можно сохранять только по принятому вызову",
+            409,
+            code="not_in_progress",
+        )
+    payload = body(SubmitIn)
+    attempt.answer = payload.answer
+    attempt.actions = payload.actions
+    commit()
+    return ok(
+        {
+            "attempt_id": str(attempt.id),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
 @sessions_bp.post("/attempts/<uuid:attempt_id>/submit")
 def submit_card(attempt_id):
     principal = require("attempt.submit")
@@ -719,7 +750,10 @@ def submit_card(attempt_id):
     verdict = scoring.evaluate(
         template_fields=template.fields if template else [],
         reference_card=scenario.reference_card,
-        reference_actions=scenario.reference_actions,
+        # в режиме «заполнение карточек» шаги работы с карточкой не оцениваются
+        reference_actions=(
+            [] if session.mode is SessionMode.CARDS else scenario.reference_actions
+        ),
         answer=payload.answer,
         actions=payload.actions,
         duration_ms=attempt.duration_ms,
@@ -727,6 +761,7 @@ def submit_card(attempt_id):
         grammar_errors=grammar_issues,
         profile=profile,
         default_pass_score=current_app.config["DEFAULT_PASS_SCORE"],
+        semantic_judge=ai.semantic_equal if ai.scoring_enabled() else None,
     )
 
     attempt.score = round(verdict.score, 2)
@@ -738,7 +773,9 @@ def submit_card(attempt_id):
     }
     attempt.evaluated_by = EvaluationSource.AI
     attempt.evaluated_at = now
-    attempt.ai_model = scoring.ENGINE
+    attempt.ai_model = scoring.ENGINE + (
+        "+" + ai.model_name() if ai.scoring_enabled() else ""
+    )
     attempt.status = AttemptStatus.EVALUATED
 
     for error in verdict.errors:

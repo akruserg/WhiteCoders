@@ -68,8 +68,16 @@ def _phone_like(value):
     return digits[-10:] if len(digits) >= 10 else digits
 
 
-def score_content(template_fields, reference_card, answer):
+MAX_JUDGE_CALLS = 3  # сколько полей карточки просим сверить нейросеть
+_JUDGE_TYPES = {"text", "textarea", "string", None}
+
+
+def score_content(template_fields, reference_card, answer, judge=None):
+    """judge(label, expected, actual) -> True/False/None: смысловая сверка полей,
+    которые по тексту не совпали. None (или нет judge) - остается вердикт правил."""
     errors = []
+    judge_calls = 0
+    semantic_matches = 0
     total_weight = 0.0
     earned = 0.0
     matched = 0
@@ -114,6 +122,17 @@ def score_content(template_fields, reference_card, answer):
         else:
             ratio = similarity(expected, actual)
 
+        if (
+            ratio < FUZZY_MATCH_THRESHOLD
+            and judge is not None
+            and field.get("type") in _JUDGE_TYPES
+            and judge_calls < MAX_JUDGE_CALLS
+        ):
+            judge_calls += 1
+            if judge(label, expected, actual):
+                ratio = 1.0
+                semantic_matches += 1
+
         if ratio >= FUZZY_MATCH_THRESHOLD:
             earned += weight
             matched += 1
@@ -131,7 +150,15 @@ def score_content(template_fields, reference_card, answer):
             )
 
     ratio = earned / total_weight if total_weight else 1.0
-    return ratio, errors, {"fields_checked": checked, "fields_matched": matched}
+    return (
+        ratio,
+        errors,
+        {
+            "fields_checked": checked,
+            "fields_matched": matched,
+            "semantic_matches": semantic_matches,
+        },
+    )
 
 
 def score_procedure(reference_actions, actions):
@@ -244,6 +271,7 @@ def evaluate(
     grammar_errors=None,
     profile=None,
     default_pass_score=70.0,
+    semantic_judge=None,
 ):
     grammar_errors = list(grammar_errors or [])
 
@@ -276,7 +304,7 @@ def evaluate(
     weights = {k: v / total_weight for k, v in weights.items()}
 
     content_ratio, content_errors, content_stats = score_content(
-        template_fields, reference_card, answer
+        template_fields, reference_card, answer, judge=semantic_judge
     )
     procedure_ratio, procedure_errors, procedure_stats = score_procedure(
         reference_actions, actions

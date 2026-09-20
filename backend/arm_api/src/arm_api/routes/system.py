@@ -39,7 +39,7 @@ from ..models import (
     SessionStatus,
 )
 from ..schemas import AlertActionIn, BackupCreateIn, SettingUpdateIn
-from ..services import integrations, reporting
+from ..services import ai, integrations, reporting
 from ..services.backup import run_backup
 from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
@@ -70,6 +70,17 @@ def _voip_state():
     }
 
 
+def _ai_state():
+    if not ai.is_enabled():
+        return {"status": "disabled"}
+    state = ai.health()
+    return {
+        "status": "up" if state.get("available") else "down",
+        "model": state.get("model"),
+        "error": state.get("error"),
+    }
+
+
 @system_bp.get("/system/health")
 def health():
     require("system.monitor")
@@ -78,6 +89,7 @@ def health():
         "api": {"status": "up"},
         "database": database,
         "voip": _voip_state(),
+        "ai": _ai_state(),
         "reports": {"status": "up", "formats": reporting.available_formats()},
     }
     overall = (

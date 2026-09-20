@@ -1,0 +1,19 @@
+services:
+  proxy:
+    build: .
+    container_name: arm_proxy
+    environment:
+      TLS_HOST: ${TLS_HOST:-localhost}
+    volumes:
+      - proxy_certs:/certs
+      # положите сюда собранный фронтенд; свой сертификат - в том proxy_certs
+      - ../../frontend/dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - arm_api
+    restart: unless-stopped
+
+volumes:
+  proxy_certs:

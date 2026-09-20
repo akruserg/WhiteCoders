@@ -3,6 +3,7 @@ import io
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from xml.sax.saxutils import escape
 
 from sqlalchemy import select
 
@@ -24,16 +25,57 @@ SUPPORTED_FORMATS = ("json", "csv", "xlsx", "pdf")
 
 def _xlsx_available():
     try:
-        return True
+        import openpyxl  # noqa: F401
     except ImportError:
         return False
+    return True
 
 
 def _pdf_available():
     try:
-        return True
+        import reportlab  # noqa: F401
     except ImportError:
         return False
+    return True
+
+
+# Стандартные шрифты PDF без кириллицы, поэтому нужен файл TTF. Путь можно
+# задать переменной PDF_FONT_PATH, иначе ищем DejaVu (в образе ставится пакетом
+# fonts-dejavu-core) и системные шрифты разработчика.
+_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+)
+_registered_fonts = {}
+
+
+def _pdf_fonts():
+    """Регистрирует шрифты (обычный, жирный) и возвращает их имена."""
+    if _registered_fonts:
+        return _registered_fonts["regular"], _registered_fonts["bold"]
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    paths = [os.environ.get("PDF_FONT_PATH", "")] + list(_FONT_CANDIDATES)
+    regular = next((p for p in paths if p and os.path.exists(p)), None)
+    if regular is None:
+        raise RuntimeError(
+            "Не найден шрифт с кириллицей для PDF: задайте PDF_FONT_PATH "
+            "или установите fonts-dejavu-core"
+        )
+    bold = regular.replace("Sans.ttf", "Sans-Bold.ttf").replace(
+        "arial.ttf", "arialbd.ttf"
+    )
+    pdfmetrics.registerFont(TTFont("AppFont", regular))
+    pdfmetrics.registerFont(
+        TTFont("AppFont-Bold", bold if os.path.exists(bold) else regular)
+    )
+    _registered_fonts.update(regular="AppFont", bold="AppFont-Bold")
+    return "AppFont", "AppFont-Bold"
 
 
 def available_formats():
@@ -260,24 +302,33 @@ def render(fmt, title, data, rows, target_dir, filename):
     if fmt == "pdf":
         if not _pdf_available():
             raise RuntimeError("Формат pdf недоступен: не установлен reportlab")
-        from reportlab.lib.pagesizes import landscape, A4
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
+        regular, bold = _pdf_fonts()
+        cell_style = ParagraphStyle("cell", fontName=regular, fontSize=7, leading=9)
+        title_style = ParagraphStyle("title", fontName=bold, fontSize=16, leading=20)
         doc = SimpleDocTemplate(path, pagesize=landscape(A4))
-        styles = getSampleStyleSheet()
-        table = Table([[str(cell) for cell in row] for row in rows], repeatRows=1)
+        # Paragraph переносит длинный текст внутри ячейки, а не режет его
+        table = Table(
+            [
+                [Paragraph(escape(str(cell)), cell_style) for cell in row]
+                for row in rows
+            ],
+            repeatRows=1,
+        )
         table.setStyle(
             TableStyle(
                 [
                     ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ]
             )
         )
-        doc.build([Paragraph(title, styles["Title"]), table])
+        doc.build([Paragraph(escape(title), title_style), table])
         return path
 
     raise RuntimeError(f"Неподдерживаемый формат: {fmt}")
@@ -289,3 +340,62 @@ def to_csv_bytes(title, rows):
     writer.writerow([title])
     writer.writerows(rows)
     return buffer.getvalue().encode("utf-8-sig")
+
+
+def render_certificate(certificate, target_dir):
+    """PDF-сертификат об итогах обучения. Возвращает путь к файлу."""
+    if not _pdf_available():
+        raise RuntimeError("Сертификат недоступен: не установлен reportlab")
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.pdfgen import canvas
+
+    regular, bold = _pdf_fonts()
+    os.makedirs(target_dir, exist_ok=True)
+    path = os.path.join(target_dir, f"certificate_{certificate.id}.pdf")
+    width, height = landscape(A4)
+    summary = (certificate.payload or {}).get("summary", {})
+    full_name = (certificate.payload or {}).get("full_name", "")
+
+    pdf = canvas.Canvas(path, pagesize=landscape(A4))
+    pdf.setStrokeColor(colors.HexColor("#EC653B"))
+    pdf.setLineWidth(3)
+    pdf.rect(28, 28, width - 56, height - 56)
+
+    def line(y, text, font, size, color="#1F2326"):
+        pdf.setFont(font, size)
+        pdf.setFillColor(colors.HexColor(color))
+        pdf.drawCentredString(width / 2, y, text)
+
+    line(height - 100, "СЕРТИФИКАТ", bold, 34, "#EC653B")
+    line(height - 135, "об успешном прохождении обучения оператора ДДС", regular, 14)
+    line(height - 200, "Настоящим подтверждается, что", regular, 13)
+    line(height - 245, full_name, bold, 26)
+    line(
+        height - 285,
+        "прошел(а) подготовку на тренажёре АРМ-112 ГБУ «Система 112»",
+        regular,
+        13,
+    )
+    line(
+        height - 335,
+        f"Средний балл: {float(certificate.score):.1f} из 100.  "
+        f"Карточек оценено: {summary.get('attempts', 0)}.  "
+        f"Доля зачёта: {summary.get('pass_rate', 0)}%",
+        regular,
+        13,
+    )
+    valid = (
+        f"{certificate.valid_until:%d.%m.%Y}"
+        if certificate.valid_until
+        else "бессрочно"
+    )
+    line(
+        90,
+        f"Номер {certificate.number}  ·  выдан {certificate.issued_at:%d.%m.%Y}  ·  действителен до {valid}",
+        regular,
+        10,
+        "#6B7378",
+    )
+    pdf.save()
+    return path

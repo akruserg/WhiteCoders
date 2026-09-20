@@ -23,7 +23,14 @@ from sqlalchemy import select
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.pagination import paginate
-from ..core.security import current_user, is_admin, is_student, require, write_audit
+from ..core.security import (
+    ADMIN_REPORT_KINDS,
+    current_user,
+    is_admin,
+    is_student,
+    require,
+    write_audit,
+)
 from ..models import (
     Attempt,
     AttemptError,
@@ -54,6 +61,12 @@ def report_formats():
 def create_report():
     principal = require("report.create", "report.read.any")
     payload = body(ReportCreateIn)
+    if is_admin(principal) and payload.kind not in ADMIN_REPORT_KINDS:
+        raise ApiError(
+            "Администратору доступны только системные отчеты",
+            403,
+            details={"allowed": sorted(ADMIN_REPORT_KINDS)},
+        )
 
     if payload.format not in reporting.available_formats():
         raise ApiError(
@@ -308,6 +321,12 @@ def issue_certificate():
     )
     db.session.add(certificate)
     db.session.flush()
+    try:
+        certificate.file_path = reporting.render_certificate(
+            certificate, os.path.join(current_app.config["REPORTS_DIR"], "certificates")
+        )
+    except (RuntimeError, OSError) as exc:  # сертификат выдан, файл можно собрать позже
+        current_app.logger.warning("PDF сертификата %s не создан: %s", number, exc)
     write_audit(
         db.session,
         request,
@@ -319,6 +338,22 @@ def issue_certificate():
     )
     commit()
     return item(certificate, 201)
+
+
+@reports_bp.get("/certificates/<uuid:certificate_id>/download")
+def download_certificate(certificate_id):
+    principal = current_user()
+    certificate = get_or_404(Certificate, certificate_id, "Сертификат")
+    if is_student(principal) and certificate.user_id != principal.id:
+        raise ApiError("Сертификат другого обучающегося", 403)
+    if not certificate.file_path or not os.path.exists(certificate.file_path):
+        raise ApiError("PDF сертификата не сформирован", 404)
+    return send_file(
+        certificate.file_path,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{certificate.number}.pdf",
+    )
 
 
 @reports_bp.get("/certificates")

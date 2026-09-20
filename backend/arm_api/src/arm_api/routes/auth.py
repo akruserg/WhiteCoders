@@ -30,10 +30,19 @@ from ..core.security import (
     write_audit,
 )
 from ..models import User
+from ..services import settings
 from ..schemas import LoginIn, MfaIn, PasswordChangeIn, RefreshIn
 from ._helpers import body, commit, ok
 
 auth_bp = Blueprint("auth", __name__)
+
+
+def _max_failed_logins():
+    return int(
+        settings.get(
+            "security.max_failed_logins", current_app.config["MAX_FAILED_LOGINS"]
+        )
+    )
 
 
 def _profile(user):
@@ -76,7 +85,7 @@ def login():
     if user is None or not verify_password(user.password_hash, payload.password):
         if user is not None:
             user.failed_attempts = (user.failed_attempts or 0) + 1
-            if user.failed_attempts >= current_app.config["MAX_FAILED_LOGINS"]:
+            if user.failed_attempts >= _max_failed_logins():
                 user.is_blocked = True
             write_audit(
                 db.session,
@@ -126,7 +135,7 @@ def mfa():
 
     if not verify_totp(user.mfa_secret, payload.code):
         user.failed_attempts = (user.failed_attempts or 0) + 1
-        if user.failed_attempts >= current_app.config["MAX_FAILED_LOGINS"]:
+        if user.failed_attempts >= _max_failed_logins():
             user.is_blocked = True
         write_audit(db.session, request, user, "auth.mfa_failed", "user", user.id)
         commit()
