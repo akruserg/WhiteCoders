@@ -8,8 +8,7 @@ from .config import Config
 
 
 class AriError(RuntimeError):
-    # астериск пал
-    pass
+    """Asterisk недоступен или отклонил команду ARI."""
 
 
 @dataclass
@@ -28,91 +27,120 @@ class AriClient:
         username: str | None = None,
         password: str | None = None,
         timeout: float | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = (base_url or Config.ARI_BASE_URL).rstrip("/")
         self.auth = (
             username or Config.ARI_USERNAME,
-            password or Config.ARI_PASSWORD,
+            password if password is not None else Config.ARI_PASSWORD,
         )
-        self.timeout = timeout or Config.ARI_TIMEOUT_SEC
+        self.timeout = Config.ARI_TIMEOUT_SEC if timeout is None else timeout
+        self._transport = transport
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
             base_url=self.base_url,
             auth=self.auth,
             timeout=self.timeout,
+            transport=self._transport,
         )
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        with self._client() as client:
+            try:
+                return client.request(method, path, **kwargs)
+            except httpx.HTTPError as exc:
+                raise AriError(f"Не удалось обратиться к ARI: {exc}") from exc
+
+    @staticmethod
+    def _check(response: httpx.Response, action: str, ok=(200, 201, 204)) -> None:
+        if response.status_code not in ok:
+            raise AriError(
+                f"ARI отклонил {action} ({response.status_code}): {response.text}"
+            )
 
     def start_call(
         self,
         *,
         attempt_id: str,
-        operator: str = "",
-        destination: str | None = None,
+        destination: str,
+        audio: str | None = None,
+        caller_number: str | None = None,
     ) -> CallHandle:
-        destination = destination or Config.VOIP_DESTINATION
+        """Звонит оператору и после ответа отдает канал приложению Stasis."""
         channel_id = uuid.uuid4().hex
-
-        payload = {
+        params = {
             "endpoint": f"PJSIP/{destination}",
-            "context": Config.VOIP_DIALPLAN_CONTEXT,
-            "extension": "s",
-            "priority": 1,
+            "app": Config.ARI_APP_NAME,
+            "appArgs": f"{attempt_id},{audio or ''}",
             "channelId": channel_id,
             "timeout": Config.VOIP_RING_TIMEOUT_SEC,
-            "variables": {
-                "ARM112_ATTEMPT_ID": str(attempt_id),
-                "ARM112_OPERATOR": operator or "",
-            },
         }
+        if caller_number:
+            params["callerId"] = caller_number
 
-        with self._client() as client:
-            try:
-                response = client.post("/channels", json=payload)
-            except httpx.HTTPError as exc:
-                raise AriError(f"Не удалось обратиться к ARI: {exc}") from exc
+        response = self._request("POST", "/channels", params=params)
+        self._check(response, "создание канала")
 
-        if response.status_code >= 400:
-            raise AriError(
-                f"ARI отклонил создание канала "
-                f"({response.status_code}): {response.text}"
-            )
-
-        return CallHandle(
-            call_id=channel_id,
-            channel_id=channel_id,
-            destination=destination,
-            attempt_id=str(attempt_id),
+        # События канала до ответа приходят только по явной подписке
+        self._request(
+            "POST",
+            f"/applications/{Config.ARI_APP_NAME}/subscription",
+            params={"eventSource": f"channel:{channel_id}"},
         )
+        return CallHandle(channel_id, channel_id, destination, str(attempt_id))
 
     def hangup(self, channel_id: str) -> dict[str, Any]:
         if not channel_id:
             return {"status": "finished", "channel_id": None}
 
-        with self._client() as client:
-            try:
-                response = client.delete(f"/channels/{channel_id}")
-            except httpx.HTTPError as exc:
-                raise AriError(f"Не удалось обратиться к ARI: {exc}") from exc
-
-        if response.status_code not in (204, 404):
-            raise AriError(
-                f"ARI отклонил Hangup " f"({response.status_code}): {response.text}"
-            )
-
+        response = self._request("DELETE", f"/channels/{channel_id}")
+        self._check(response, "Hangup", ok=(200, 204, 404))
         return {"status": "finished", "channel_id": channel_id}
 
+    def play(self, channel_id: str, media: str) -> str:
+        response = self._request(
+            "POST", f"/channels/{channel_id}/play", params={"media": media}
+        )
+        self._check(response, "воспроизведение")
+        return response.json().get("id", "")
+
+    def channel_exists(self, channel_id: str) -> bool:
+        response = self._request("GET", f"/channels/{channel_id}")
+        if response.status_code == 404:
+            return False
+        self._check(response, "запрос канала")
+        return True
+
+    def rtt_ms(self, channel_id: str) -> float | None:
+        """RTT по RTCP в миллисекундах. None, если статистики пока нет."""
+        response = self._request(
+            "GET",
+            f"/channels/{channel_id}/variable",
+            params={"variable": "CHANNEL(rtcp,rtt)"},
+        )
+        if response.status_code != 200:
+            return None
+        try:
+            return round(float(response.json().get("value", "")) * 1000, 1)
+        except (TypeError, ValueError):
+            return None
+
+    def reload_pjsip(self) -> None:
+        response = self._request("PUT", "/asterisk/modules/res_pjsip.so")
+        self._check(response, "перезагрузку PJSIP")
+
     def ping(self) -> dict[str, Any]:
-        with self._client() as client:
-            try:
-                response = client.get("/asterisk/info")
-            except httpx.HTTPError as exc:
-                return {"available": False, "error": str(exc)}
+        try:
+            response = self._request("GET", "/asterisk/info")
+        except AriError as exc:
+            return {"available": False, "error": str(exc)}
 
         if response.status_code >= 400:
-            return {
-                "available": False,
-                "error": f"HTTP {response.status_code}",
-            }
+            return {"available": False, "error": f"HTTP {response.status_code}"}
 
-        return {"available": True, "info": response.json()}
+        info = response.json()
+        return {
+            "available": True,
+            "version": (info.get("system") or {}).get("version"),
+        }
