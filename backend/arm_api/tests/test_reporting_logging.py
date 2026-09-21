@@ -73,3 +73,12 @@ def test_admin_has_no_access_to_student_results_only_system_reports():
     assert {"system.manage", "audit.read", "user.manage"} <= admin
     assert ADMIN_REPORT_KINDS == {"system_usage", "security_audit"}
     assert "report.read.any" in ROLE_PERMISSIONS["teacher"]
+
+
+def test_httpx_requests_are_not_logged_so_webhook_keys_stay_out_of_logs():
+    import logging
+
+    from arm_api.core.logging import setup_logging
+
+    setup_logging("text", logging.INFO)
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

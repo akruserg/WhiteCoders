@@ -6,6 +6,7 @@ GET /users/{id}/progress    - прогресс конкретного обуча
 GET /sessions/{id}/results  - результаты занятия по обучающимся
 GET /analytics/heatmap      - тепловая карта ошибок
 GET /analytics/overview     - сводка по системе
+GET /analytics/forecast-accuracy - точность прогноза: прогноз против фактической оценки
 """
 
 from flask import Blueprint
@@ -25,7 +26,9 @@ results_bp = Blueprint("results", __name__)
 @results_bp.get("/me/progress")
 def my_progress():
     principal = current_user()
-    return ok(analytics.user_progress(principal.id, uuid_arg("session_id")))
+    data = analytics.user_progress(principal.id, uuid_arg("session_id"))
+    data["forecast_accuracy"] = analytics.forecast_accuracy(user_id=principal.id)
+    return ok(data)
 
 
 @results_bp.get("/me/attempts")
@@ -106,6 +109,20 @@ def heatmap():
             group_id=uuid_arg("group_id"),
             category_id=int_arg("category_id"),
             # преподаватель видит только свои занятия
+            teacher_id=None if is_admin(principal) else principal.id,
+        )
+    )
+
+
+@results_bp.get("/analytics/forecast-accuracy")
+def forecast_accuracy():
+    principal = require("report.read.any", "insight.manage")
+    return ok(
+        analytics.forecast_accuracy(
+            user_id=uuid_arg("user_id"),
+            session_id=uuid_arg("session_id"),
+            group_id=uuid_arg("group_id"),
+            category_id=int_arg("category_id"),
             teacher_id=None if is_admin(principal) else principal.id,
         )
     )

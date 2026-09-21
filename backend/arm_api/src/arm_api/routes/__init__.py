@@ -8,6 +8,7 @@ from .results import results_bp
 from .scenarios import scenarios_bp
 from .sessions import sessions_bp
 from .system import system_bp
+from .updates import updates_bp
 from .users import users_bp
 from .workstations import workstations_bp
 
@@ -21,6 +22,7 @@ API_BLUEPRINTS = (
     results_bp,
     reports_bp,
     system_bp,
+    updates_bp,
     internal_bp,
     workstations_bp,
 )

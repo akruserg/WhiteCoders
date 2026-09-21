@@ -61,7 +61,15 @@ from ..schemas import (
     SessionUpdate,
     SubmitIn,
 )
-from ..services import ai, card_schema, grammar, integrations, scoring, settings
+from ..services import (
+    ai,
+    analytics,
+    card_schema,
+    grammar,
+    integrations,
+    scoring,
+    settings,
+)
 from ._helpers import body, commit, get_or_404, ok, uuid_arg
 
 sessions_bp = Blueprint("sessions", __name__)
@@ -522,6 +530,7 @@ def next_card(session_id):
         seq=seq,
         status=AttemptStatus.ISSUED,
         time_limit_sec=time_limit,
+        forecast_score=analytics.forecast_next_attempt(principal.id),
         answer={},
         actions=[],
     )

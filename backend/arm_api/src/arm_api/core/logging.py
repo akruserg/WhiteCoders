@@ -34,3 +34,12 @@ def setup_logging(fmt="json", level=logging.INFO):
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+    # httpx в INFO пишет полный адрес запроса, а в адресе webhook оповещений может быть
+    # ключ доступа: без этого он попадал бы в журнал
+    numeric = (
+        level if isinstance(level, int) else logging.getLevelName(str(level).upper())
+    )
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(
+            max(numeric if isinstance(numeric, int) else logging.INFO, logging.WARNING)
+        )

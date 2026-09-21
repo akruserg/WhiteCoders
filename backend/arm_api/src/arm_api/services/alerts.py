@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..core.extensions import db
 from ..models import Alert, AlertSeverity, AlertStatus
+from . import notify
 
 
 def raise_alert(component, title, fingerprint, severity="warning", details=None):
@@ -26,7 +27,9 @@ def raise_alert(component, title, fingerprint, severity="warning", details=None)
     if alert is not None:
         alert.occurrences = (alert.occurrences or 1) + 1
         alert.last_seen_at = now
-        alert.details = details or alert.details
+        # отметки служебных полей (например, notified_at) сохраняются
+        alert.details = {**(alert.details or {}), **(details or {})}
+        notify.maybe_notify(alert)
         return alert
 
     alert = Alert(
@@ -41,4 +44,5 @@ def raise_alert(component, title, fingerprint, severity="warning", details=None)
             db.session.add(alert)
     except IntegrityError:  # параллельный запрос успел открыть такое же
         return None
+    notify.maybe_notify(alert)
     return alert

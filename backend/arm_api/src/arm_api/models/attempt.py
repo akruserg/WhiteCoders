@@ -57,6 +57,8 @@ class Attempt(db.Model):
     actions = db.Column(JSONB, nullable=False, default=list)
 
     score = db.Column(db.Numeric(5, 2))
+    # прогноз балла на момент выдачи карточки; сравнивается с фактом (analytics.forecast_accuracy)
+    forecast_score = db.Column(db.Numeric(5, 2))
     passed = db.Column(db.Boolean)
     evaluation = db.Column(JSONB)
     evaluated_by = db.Column(

@@ -295,3 +295,35 @@ def test_performance_settings_are_consistent():
         assert key in keys and key in seed.ENV_BACKED
         assert keys[key][1] == "performance" and keys[key][5] is True  # нужен рестарт
     assert keys["perf.max_active_sessions"][5] is False  # действует сразу
+
+
+# ---------------------------------------------------------------- точность прогноза
+
+
+def test_accuracy_stats_metrics():
+    from arm_api.services.analytics import accuracy_stats
+
+    stats = accuracy_stats([(80, 78), (70, 75), (90, 60), (60, 62), (85, 85)])
+    assert stats["n"] == 5 and stats["mae"] == 7.8
+    assert stats["hit_rate"] == 0.8 and stats["reliability"] == "high"
+    assert stats["bias"] == 5.0  # ошибки +2, -5, +30, -2, 0: прогноз завышал
+    assert stats["rmse"] >= stats["mae"]
+
+
+def test_accuracy_stats_reliability_levels_and_empty():
+    from arm_api.services.analytics import accuracy_stats
+
+    assert accuracy_stats([])["available"] is False
+    assert accuracy_stats([(50, 50)] * 3)["reliability"] == "insufficient"
+    bad = accuracy_stats([(90, 40), (10, 80), (95, 30), (20, 90), (60, 60)])
+    assert bad["reliability"] == "low" and bad["hit_rate"] == 0.2
+
+
+def test_accuracy_skill_compares_with_naive_baseline():
+    from arm_api.services.analytics import accuracy_stats
+
+    actual = [50, 60, 70, 80, 90]
+    good = accuracy_stats([(a + 1, a) for a in actual])
+    naive = accuracy_stats([(70, a) for a in actual])
+    assert good["skill"] > 0.8
+    assert naive["skill"] == 0.0

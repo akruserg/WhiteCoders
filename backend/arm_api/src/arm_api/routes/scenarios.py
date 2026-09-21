@@ -185,20 +185,9 @@ def export_scenarios():
     )
 
 
-@scenarios_bp.post("/scenarios/import")
-def import_scenarios():
-    """Пакетная загрузка сценариев (билеты и задачи, обновление вручную). Формат как
-    у /scenarios/export. Принимается целиком или не принимается вовсе, сценарии
-    попадают на утверждение преподавателем."""
-    principal = require("scenario.manage")
-    data = request.get_json(silent=True)
-    items = (data or {}).get("scenarios") if isinstance(data, dict) else None
-    if not isinstance(items, list) or not items:
-        raise ApiError('Ожидается {"scenarios": [...]}', 422)
-    if len(items) > MAX_IMPORT_SCENARIOS:
-        raise ApiError(f"За один раз не более {MAX_IMPORT_SCENARIOS} сценариев", 422)
-
-    template = _active_template()
+def parse_import_items(items):
+    """Разбор пакета сценариев. Возвращает ([(ScenarioImportItem, category_id)], {позиция: ошибки}).
+    Общий для POST /scenarios/import и пакетного обновления (routes/updates.py)."""
     by_code = {
         c.code: c.id for c in db.session.execute(select(IncidentCategory)).scalars()
     }
@@ -223,9 +212,11 @@ def import_scenarios():
             }
         else:
             parsed.append((item, category_id))
-    if errors:
-        raise ApiError("Импорт не выполнен", 422, details=errors)
+    return parsed, errors
 
+
+def add_imported(parsed, template, author_id):
+    """Добавляет разобранные сценарии на проверку преподавателем (pending_review)."""
     for item, category_id in parsed:
         db.session.add(
             Scenario(
@@ -239,9 +230,29 @@ def import_scenarios():
                 reference_card=item.reference_card,
                 reference_actions=item.reference_actions,
                 time_limit_sec=item.time_limit_sec,
-                author_id=principal.id,
+                author_id=author_id,
             )
         )
+
+
+@scenarios_bp.post("/scenarios/import")
+def import_scenarios():
+    """Пакетная загрузка сценариев (билеты и задачи, обновление вручную). Формат как
+    у /scenarios/export. Принимается целиком или не принимается вовсе, сценарии
+    попадают на утверждение преподавателем."""
+    principal = require("scenario.manage")
+    data = request.get_json(silent=True)
+    items = (data or {}).get("scenarios") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        raise ApiError('Ожидается {"scenarios": [...]}', 422)
+    if len(items) > MAX_IMPORT_SCENARIOS:
+        raise ApiError(f"За один раз не более {MAX_IMPORT_SCENARIOS} сценариев", 422)
+
+    template = _active_template()
+    parsed, errors = parse_import_items(items)
+    if errors:
+        raise ApiError("Импорт не выполнен", 422, details=errors)
+    add_imported(parsed, template, principal.id)
     write_audit(
         db.session, request, principal, "scenario.import", "scenario", None,
         {"count": len(parsed)},

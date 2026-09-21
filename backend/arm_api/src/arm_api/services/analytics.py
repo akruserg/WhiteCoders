@@ -105,6 +105,100 @@ def forecast_scores(scores, pass_score=70.0):
     }
 
 
+FORECAST_WINDOW = 10  # по скольким последним карточкам строится прогноз
+FORECAST_TOLERANCE = 10.0  # попаданием считается ошибка не более 10 баллов
+
+
+def forecast_next_attempt(user_id):
+    """Прогноз балла следующей карточки по линейному тренду последних оценок или None."""
+    rows = db.session.execute(
+        select(func.coalesce(Attempt.expert_score, Attempt.score))
+        .where(
+            Attempt.user_id == user_id,
+            Attempt.status.in_(_EVALUATED),
+            Attempt.score.is_not(None),
+        )
+        .order_by(Attempt.submitted_at.desc())
+        .limit(FORECAST_WINDOW)
+    ).all()
+    scores = [float(value) for (value,) in reversed(rows)]
+    result = forecast_scores(scores)
+    return result["next_score"] if result.get("available") else None
+
+
+def accuracy_stats(pairs, tolerance=FORECAST_TOLERANCE):
+    """Достоверность прогноза по парам (прогноз, факт).
+
+    mae, rmse - средняя и среднеквадратичная ошибка в баллах; bias - смещение
+    (плюс: прогноз завышал); hit_rate - доля ошибок в пределах допуска; skill - выигрыш
+    у наивного прогноза «всегда средний балл» (больше 0: прогноз лучше наивного).
+    """
+    n = len(pairs)
+    if not n:
+        return {
+            "available": False,
+            "reason": "нет карточек с прогнозом и оценкой",
+            "n": 0,
+        }
+    errors = [predicted - actual for predicted, actual in pairs]
+    mean_actual = sum(actual for _, actual in pairs) / n
+    mae = sum(abs(e) for e in errors) / n
+    baseline = sum(abs(actual - mean_actual) for _, actual in pairs) / n
+    hit_rate = sum(1 for e in errors if abs(e) <= tolerance) / n
+    if n < 5:
+        reliability = "insufficient"
+    elif hit_rate >= 0.7:
+        reliability = "high"
+    elif hit_rate >= 0.5:
+        reliability = "medium"
+    else:
+        reliability = "low"
+    return {
+        "available": True,
+        "n": n,
+        "mae": round(mae, 2),
+        "rmse": round(math.sqrt(sum(e * e for e in errors) / n), 2),
+        "bias": round(sum(errors) / n, 2),
+        "hit_rate": round(hit_rate, 2),
+        "tolerance": tolerance,
+        "baseline_mae": round(baseline, 2),
+        "skill": round(1 - mae / baseline, 2) if baseline else None,
+        "reliability": reliability,
+    }
+
+
+def forecast_accuracy(
+    user_id=None, session_id=None, group_id=None, teacher_id=None, category_id=None
+):
+    """Сравнение сохраненных прогнозов с фактическими оценками карточек."""
+    stmt = (
+        select(
+            Attempt.forecast_score,
+            func.coalesce(Attempt.expert_score, Attempt.score),
+        )
+        .join(TrainingSession, TrainingSession.id == Attempt.session_id)
+        .where(
+            Attempt.forecast_score.is_not(None),
+            Attempt.score.is_not(None),
+            Attempt.status.in_(_EVALUATED),
+        )
+    )
+    if user_id:
+        stmt = stmt.where(Attempt.user_id == user_id)
+    if session_id:
+        stmt = stmt.where(Attempt.session_id == session_id)
+    if group_id:
+        stmt = stmt.where(TrainingSession.group_id == group_id)
+    if teacher_id:
+        stmt = stmt.where(TrainingSession.teacher_id == teacher_id)
+    if category_id:
+        stmt = stmt.join(Scenario, Scenario.id == Attempt.scenario_id).where(
+            Scenario.category_id == category_id
+        )
+    pairs = [(float(p), float(f)) for p, f in db.session.execute(stmt).all()]
+    return accuracy_stats(pairs)
+
+
 def user_progress(user_id, session_id=None):
     where = [Attempt.user_id == user_id, Attempt.status.in_(_EVALUATED)]
     if session_id:

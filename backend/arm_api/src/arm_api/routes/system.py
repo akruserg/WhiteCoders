@@ -8,6 +8,7 @@ GET  /system/audit/verify      - проверка целостности жур�
 GET  /system/events            - системный журнал
 GET  /system/alerts            - оповещения об ошибках и сбоях
 POST /system/alerts/{id}/ack | /resolve
+POST /system/notify/test        - проверка доставки оповещений (webhook, почта)
 GET  /system/backups           - история резервных копий
 POST /system/backups           - запуск резервного копирования
 GET  /system/voip              - состояние VoIP (Asterisk)
@@ -43,7 +44,7 @@ from ..models import (
     SessionStatus,
 )
 from ..schemas import AlertActionIn, BackupCreateIn, SettingUpdateIn
-from ..services import ai, integrations, reporting, settings
+from ..services import ai, integrations, notify, reporting, settings
 from ..services.backup import run_backup
 from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
@@ -356,6 +357,23 @@ def system_events():
     if request.args.get("component"):
         stmt = stmt.where(SystemEvent.component == request.args["component"])
     return ok(paginate(stmt))
+
+
+@system_bp.post("/system/notify/test")
+def notify_test():
+    principal = require("system.manage")
+    result = notify.send_test()
+    write_audit(
+        db.session,
+        request,
+        principal,
+        "notify.test",
+        "system",
+        None,
+        {"channels": result["channels"]},
+    )
+    commit()
+    return ok(result)
 
 
 @system_bp.get("/system/alerts")

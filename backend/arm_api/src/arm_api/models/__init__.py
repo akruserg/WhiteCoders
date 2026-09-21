@@ -11,6 +11,7 @@ from .scenario import Scenario, ScenarioOrigin, ScenarioStatus
 from .scenario_correction import ScenarioCorrection
 from .material import Material
 from .material_chunk import MaterialChunk
+from .system_update import SystemUpdate
 from .training_session import (
     QuestionSource,
     SessionMode,
@@ -51,6 +52,7 @@ __all__ = [
     "ScenarioCorrection",
     "Material",
     "MaterialChunk",
+    "SystemUpdate",
     "TrainingSession",
     "SessionMode",
     "SessionStatus",
