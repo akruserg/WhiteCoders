@@ -1,7 +1,9 @@
+import uuid
+
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, utcnow
 
 session_categories = db.Table(
     "session_categories",
@@ -46,7 +48,7 @@ class TrainingSession(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     title = db.Column(db.String(255), nullable=False)
     teacher_id = db.Column(
@@ -79,9 +81,9 @@ class TrainingSession(db.Model):
     difficulty_max = db.Column(db.SmallInteger, nullable=False, default=5)
     time_limit_sec = db.Column(db.Integer, nullable=False, default=30)
     settings = db.Column(JSONB, nullable=False, default=dict)
-    started_at = db.Column(db.DateTime(timezone=True))
-    finished_at = db.Column(db.DateTime(timezone=True))
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    started_at = db.Column(UTCDateTime())
+    finished_at = db.Column(UTCDateTime())
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     teacher = db.relationship("User", back_populates="training_sessions")
     group = db.relationship("Group", back_populates="sessions")

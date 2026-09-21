@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, utcnow
 
 
 class ScenarioCorrection(db.Model):
@@ -8,7 +10,7 @@ class ScenarioCorrection(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     scenario_id = db.Column(
         db.UUID(as_uuid=True),
@@ -21,9 +23,9 @@ class ScenarioCorrection(db.Model):
     )
     comment = db.Column(db.Text, nullable=False)
     applied = db.Column(db.Boolean, nullable=False, default=False)
-    applied_at = db.Column(db.DateTime(timezone=True))
+    applied_at = db.Column(UTCDateTime())
     result = db.Column(JSONB)
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     scenario = db.relationship("Scenario", back_populates="corrections")
     author = db.relationship("User", back_populates="scenario_corrections")

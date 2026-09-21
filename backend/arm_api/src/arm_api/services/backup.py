@@ -1,20 +1,18 @@
 import hashlib
 import logging
 import os
-import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 from sqlalchemy import delete, select
-from sqlalchemy.engine.url import make_url
 
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import log_event
 from ..models import AuditLog, Backup
-from . import alerts, settings
+from . import alerts, dbtools, settings
 
 logger = logging.getLogger(__name__)
 
@@ -37,52 +35,12 @@ def _backups_dir():
     return path
 
 
-def _pg_dump_command(file_path):
-    url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
-    env = os.environ.copy()
-    if url.password:
-        env["PGPASSWORD"] = url.password
-    command = [
-        "pg_dump",
-        "--format=custom",
-        "--file",
-        file_path,
-        "--host",
-        url.host or "localhost",
-        "--port",
-        str(url.port or 5432),
-        "--username",
-        url.username or "postgres",
-        "--dbname",
-        url.database,
-    ]
-    return command, env
-
-
 def _file_sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _dump_database(file_path):
-    if shutil.which("pg_dump") is None:
-        raise RuntimeError("pg_dump недоступен в контейнере API")
-    command, env = _pg_dump_command(file_path)
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        timeout=1800,
-        env=env,
-    )
-    if completed.returncode != 0:
-        stderr = (completed.stderr or b"").decode("utf-8", errors="replace")[:1000]
-        raise RuntimeError(
-            stderr or f"pg_dump завершился с кодом {completed.returncode}"
-        )
 
 
 def _prune_old_backups():
@@ -119,10 +77,10 @@ def run_backup(kind="full", automatic=True, created_by=None):
     db.session.flush()
 
     target_dir = _backups_dir()
-    path = os.path.join(target_dir, f"backup_{backup.id}.dump")
+    path = os.path.join(target_dir, f"backup_{backup.id}.{dbtools.backup_extension()}")
 
     try:
-        _dump_database(path)
+        dbtools.dump(path)
         backup.status = "success"
         backup.file_path = path
         backup.size_bytes = os.path.getsize(path)
@@ -236,35 +194,14 @@ def run_loop():
 
 
 def restore_backup(file_path):
-    """Восстанавливает БД из копии pg_dump (формат custom).
+    """Восстанавливает БД из копии (формат зависит от СУБД, см. dbtools).
 
-    Заменяет существующие объекты. Запускать при остановленном API:
+    Запускать при остановленном API:
         docker compose exec arm_api python -m arm_api.services.backup restore <файл>
     """
-    if shutil.which("pg_restore") is None:
-        raise RuntimeError("pg_restore недоступен в контейнере API")
     if not os.path.exists(file_path):
         raise RuntimeError(f"Файл копии не найден: {file_path}")
-    url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
-    env = os.environ.copy()
-    if url.password:
-        env["PGPASSWORD"] = url.password
-    command = [
-        "pg_restore", "--clean", "--if-exists", "--no-owner",
-        "--host", url.host or "localhost",
-        "--port", str(url.port or 5432),
-        "--username", url.username or "postgres",
-        "--dbname", url.database,
-        file_path,
-    ]  # fmt: skip
-    completed = subprocess.run(
-        command, check=False, capture_output=True, timeout=3600, env=env
-    )
-    if completed.returncode != 0:
-        stderr = (completed.stderr or b"").decode("utf-8", errors="replace")[:1000]
-        raise RuntimeError(
-            stderr or f"pg_restore завершился с кодом {completed.returncode}"
-        )
+    dbtools.restore(file_path)
 
 
 def purge_old_audit():

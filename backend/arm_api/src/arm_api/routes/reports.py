@@ -46,7 +46,7 @@ from ..models import (
 )
 from ..schemas import CertificateIn, InsightGenerateIn, ReportCreateIn
 from ..services import ai, analytics, reporting
-from ._helpers import body, commit, get_or_404, item, ok
+from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
 reports_bp = Blueprint("reports", __name__)
 
@@ -67,7 +67,11 @@ def _check_report_scope(principal, payload):
         if session.teacher_id != principal.id:
             raise ApiError("Занятие другого преподавателя", 403)
     if params.get("group_id"):
-        group = get_or_404(Group, params["group_id"], "Группа")
+        try:
+            group_id = uuid_mod.UUID(str(params["group_id"]))
+        except ValueError:
+            raise ApiError("group_id должен быть UUID", 422)
+        group = get_or_404(Group, group_id, "Группа")
         if group.teacher_id != principal.id:
             raise ApiError("Группа другого преподавателя", 403)
 
@@ -181,8 +185,8 @@ def list_reports():
             stmt = stmt.where(Report.kind == ReportKind(request.args["kind"]))
         except ValueError:
             raise ApiError("Некорректный kind", 422)
-    if request.args.get("session_id"):
-        stmt = stmt.where(Report.session_id == request.args["session_id"])
+    if uuid_arg("session_id"):
+        stmt = stmt.where(Report.session_id == uuid_arg("session_id"))
     return ok(paginate(stmt))
 
 
@@ -313,8 +317,8 @@ def list_insights():
         stmt = stmt.where(
             Insight.target_user_id == principal.id, Insight.is_published.is_(True)
         )
-    if request.args.get("session_id"):
-        stmt = stmt.where(Insight.session_id == request.args["session_id"])
+    if uuid_arg("session_id"):
+        stmt = stmt.where(Insight.session_id == uuid_arg("session_id"))
     if request.args.get("kind"):
         try:
             stmt = stmt.where(Insight.kind == InsightKind(request.args["kind"]))
@@ -402,6 +406,6 @@ def list_certificates():
     stmt = select(Certificate).order_by(Certificate.issued_at.desc())
     if is_student(principal):
         stmt = stmt.where(Certificate.user_id == principal.id)
-    elif request.args.get("user_id"):
-        stmt = stmt.where(Certificate.user_id == request.args["user_id"])
+    elif uuid_arg("user_id"):
+        stmt = stmt.where(Certificate.user_id == uuid_arg("user_id"))
     return ok(paginate(stmt))

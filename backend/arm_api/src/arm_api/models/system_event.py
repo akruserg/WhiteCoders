@@ -1,12 +1,12 @@
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import BigIntPK, JSONB, UTCDateTime, utcnow
 
 
 class SystemEvent(db.Model):
     __tablename__ = "system_events"
 
-    id = db.Column(db.BigInteger, primary_key=True)
-    ts = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    id = db.Column(BigIntPK, primary_key=True)
+    ts = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     component = db.Column(db.String(64), nullable=False)
     level = db.Column(db.String(16), nullable=False)
     message = db.Column(db.Text, nullable=False)

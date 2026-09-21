@@ -1,7 +1,9 @@
+import uuid
+
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, pg_only, utcnow
 
 
 class ScenarioOrigin(enum.Enum):
@@ -25,7 +27,7 @@ class Scenario(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     title = db.Column(db.String(255), nullable=False)
     category_id = db.Column(
@@ -72,14 +74,14 @@ class Scenario(db.Model):
         db.UUID(as_uuid=True),
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
-    validated_at = db.Column(db.DateTime(timezone=True))
+    validated_at = db.Column(UTCDateTime())
 
     validated_fields = db.Column(JSONB, nullable=False, default=dict)
 
     ai_model = db.Column(db.String(64))
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        UTCDateTime(), nullable=False, default=utcnow, onupdate=utcnow
     )
 
     category = db.relationship("IncidentCategory", back_populates="scenarios")
@@ -108,8 +110,10 @@ class Scenario(db.Model):
         db.Index("ix_scenarios_category_id", "category_id"),
         db.Index("ix_scenarios_status_origin", "status", "origin"),
         db.Index("ix_scenarios_difficulty", "difficulty"),
-        db.Index(
-            "ix_scenarios_reference_card", "reference_card", postgresql_using="gin"
+        *pg_only(
+            db.Index(
+                "ix_scenarios_reference_card", "reference_card", postgresql_using="gin"
+            )
         ),
         db.CheckConstraint(
             "difficulty BETWEEN 1 AND 5", name="ck_scenarios_difficulty"

@@ -1,7 +1,9 @@
+import uuid
+
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, pg_only, utcnow
 
 
 class AttemptStatus(enum.Enum):
@@ -24,7 +26,7 @@ class Attempt(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     session_id = db.Column(
         db.UUID(as_uuid=True),
@@ -45,9 +47,9 @@ class Attempt(db.Model):
         nullable=False,
         default=AttemptStatus.ISSUED,
     )
-    issued_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
-    started_at = db.Column(db.DateTime(timezone=True))
-    submitted_at = db.Column(db.DateTime(timezone=True))
+    issued_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    started_at = db.Column(UTCDateTime())
+    submitted_at = db.Column(UTCDateTime())
     duration_ms = db.Column(db.Integer)
 
     time_limit_sec = db.Column(db.Integer, nullable=False, default=30)
@@ -60,7 +62,7 @@ class Attempt(db.Model):
     evaluated_by = db.Column(
         db.Enum(EvaluationSource, name="evaluation_source", native_enum=True)
     )
-    evaluated_at = db.Column(db.DateTime(timezone=True))
+    evaluated_at = db.Column(UTCDateTime())
     ai_model = db.Column(db.String(64))
 
     expert_id = db.Column(
@@ -69,7 +71,7 @@ class Attempt(db.Model):
     )
     expert_score = db.Column(db.Numeric(5, 2))
     expert_comment = db.Column(db.Text)
-    expert_reviewed_at = db.Column(db.DateTime(timezone=True))
+    expert_reviewed_at = db.Column(UTCDateTime())
 
     session = db.relationship("TrainingSession", back_populates="attempts")
     user = db.relationship("User", back_populates="attempts", foreign_keys=[user_id])
@@ -98,7 +100,7 @@ class Attempt(db.Model):
         db.Index("ix_attempts_scenario_id", "scenario_id"),
         db.Index("ix_attempts_status", "status"),
         db.Index("ix_attempts_submitted_at", "submitted_at"),
-        db.Index("ix_attempts_answer", "answer", postgresql_using="gin"),
+        *pg_only(db.Index("ix_attempts_answer", "answer", postgresql_using="gin")),
         db.CheckConstraint(
             "score IS NULL OR (score >= 0 AND score <= 100)",
             name="ck_attempts_score_range",

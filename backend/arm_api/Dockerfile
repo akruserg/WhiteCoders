@@ -12,10 +12,13 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir poetry
 
+# для MySQL/MariaDB: docker compose build --build-arg POETRY_EXTRAS="-E mysql"
+ARG POETRY_EXTRAS=""
+
 COPY pyproject.toml poetry.lock ./
 
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-root --only main
+    && poetry install --no-interaction --no-root --only main ${POETRY_EXTRAS}
 
 COPY . .
 

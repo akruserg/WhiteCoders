@@ -1,7 +1,7 @@
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import BigIntPK, JSONB, UTCDateTime, pg_only, utcnow
 
 
 class AlertSeverity(enum.Enum):
@@ -19,7 +19,7 @@ class AlertStatus(enum.Enum):
 class Alert(db.Model):
     __tablename__ = "alerts"
 
-    id = db.Column(db.BigInteger, primary_key=True)
+    id = db.Column(BigIntPK, primary_key=True)
     component = db.Column(db.String(64), nullable=False)
     severity = db.Column(
         db.Enum(AlertSeverity, name="alert_severity", native_enum=True),
@@ -36,27 +36,27 @@ class Alert(db.Model):
 
     fingerprint = db.Column(db.String(128), nullable=False)
     occurrences = db.Column(db.Integer, nullable=False, default=1)
-    first_seen_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow
-    )
-    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    last_seen_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     acknowledged_by = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
-    acknowledged_at = db.Column(db.DateTime(timezone=True))
-    resolved_at = db.Column(db.DateTime(timezone=True))
+    acknowledged_at = db.Column(UTCDateTime())
+    resolved_at = db.Column(UTCDateTime())
 
     acknowledger = db.relationship("User")
 
     __table_args__ = (
         db.Index("ix_alerts_status_severity", "status", "severity"),
         db.Index("ix_alerts_last_seen_at", "last_seen_at"),
-        db.Index(
-            "uq_alerts_open_fingerprint",
-            "fingerprint",
-            unique=True,
-            postgresql_where=db.text("status <> 'RESOLVED'"),
+        *pg_only(
+            db.Index(
+                "uq_alerts_open_fingerprint",
+                "fingerprint",
+                unique=True,
+                postgresql_where=db.text("status <> 'RESOLVED'"),
+            )
         ),
     )
 

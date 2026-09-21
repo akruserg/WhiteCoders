@@ -34,6 +34,20 @@ class Config:
         "max_overflow": _int("DB_MAX_OVERFLOW", 20),
         "pool_pre_ping": True,
         "pool_recycle": 1800,
+        # быстрое обнаружение потерянного узла PostgreSQL (см. ТЗ: сбои узлов)
+        **(
+            {
+                "connect_args": {
+                    "connect_timeout": _int("DB_CONNECT_TIMEOUT_SEC", 5),
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 3,
+                }
+            }
+            if os.environ.get("DATABASE_URL", "").startswith("postgresql")
+            else {}
+        ),
     }
 
     # JWT ; authentication

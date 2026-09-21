@@ -1,7 +1,9 @@
+import uuid
+
 import enum
 
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 
 class CallChannel(enum.Enum):
@@ -22,7 +24,7 @@ class Call(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     attempt_id = db.Column(
         db.UUID(as_uuid=True),
@@ -34,7 +36,7 @@ class Call(db.Model):
         nullable=False,
         default=CallChannel.TEXT,
     )
-    sip_call_id = db.Column(db.String(128), unique=True, index=True)
+    sip_call_id = db.Column(db.String(128), unique=True)
     asterisk_channel = db.Column(
         db.String(256),
         index=True,
@@ -45,9 +47,9 @@ class Call(db.Model):
         nullable=False,
         default=CallStatus.RINGING,
     )
-    ring_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
-    answer_at = db.Column(db.DateTime(timezone=True))
-    finish_at = db.Column(db.DateTime(timezone=True))
+    ring_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    answer_at = db.Column(UTCDateTime())
+    finish_at = db.Column(UTCDateTime())
     answer_delay_ms = db.Column(db.Integer)
     rtt_ms = db.Column(db.Integer)
     audio_path = db.Column(db.String(512))

@@ -149,10 +149,6 @@ def _pick_scenario(session, user):
         Scenario.origin.in_(_origins_for(session.question_source)),
     )
 
-    if session.mode is SessionMode.CARD_ACTIONS:
-        # оцениваются шаги работы с карточкой, значит эталон обязан их содержать
-        stmt = stmt.where(db.func.jsonb_array_length(Scenario.reference_actions) > 0)
-
     categories = [c.id for c in session.categories]
     scope = [c.id for c in user.service_scope]
     if scope:
@@ -169,6 +165,9 @@ def _pick_scenario(session, user):
     )
 
     pool = list(db.session.execute(stmt.limit(500)).scalars())
+    if session.mode is SessionMode.CARD_ACTIONS:
+        # оцениваются шаги работы с карточкой, значит эталон обязан их содержать
+        pool = [s for s in pool if s.reference_actions]
     if not pool:
         raise ApiError(
             "Нет утвержденных сценариев для выбранных категорий и уровня сложности",

@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 group_members = db.Table(
     "group_members",
@@ -25,14 +27,14 @@ class Group(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     name = db.Column(db.String(128), nullable=False)
     teacher_id = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     teacher = db.relationship(
         "User",

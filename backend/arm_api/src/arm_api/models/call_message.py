@@ -1,11 +1,11 @@
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import BigIntPK, UTCDateTime, utcnow
 
 
 class CallMessage(db.Model):
     __tablename__ = "call_messages"
 
-    id = db.Column(db.BigInteger, primary_key=True)
+    id = db.Column(BigIntPK, primary_key=True)
     call_id = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("calls.id", ondelete="CASCADE"),
@@ -13,7 +13,7 @@ class CallMessage(db.Model):
     )
     author = db.Column(db.String(16), nullable=False)
     text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     call = db.relationship("Call", back_populates="messages")
 

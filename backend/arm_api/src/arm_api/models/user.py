@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 
 class User(db.Model):
@@ -8,7 +10,7 @@ class User(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     username = db.Column(db.String(64), nullable=False, unique=True)
     full_name = db.Column(db.String(255), nullable=False)
@@ -17,18 +19,16 @@ class User(db.Model):
     role_id = db.Column(db.SmallInteger, db.ForeignKey("roles.id"), nullable=False)
     mfa_enabled = db.Column(db.Boolean, nullable=False, default=False)
     mfa_secret = db.Column(db.String(64))
-    pd_consent_at = db.Column(db.DateTime(timezone=True))
-    anonymized_at = db.Column(db.DateTime(timezone=True))
+    pd_consent_at = db.Column(UTCDateTime())
+    anonymized_at = db.Column(UTCDateTime())
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     is_blocked = db.Column(db.Boolean, nullable=False, default=False)
     failed_attempts = db.Column(db.SmallInteger, nullable=False, default=0)
-    last_login_at = db.Column(db.DateTime(timezone=True))
-    password_changed_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow
-    )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    last_login_at = db.Column(UTCDateTime())
+    password_changed_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        UTCDateTime(), nullable=False, default=utcnow, onupdate=utcnow
     )
 
     role = db.relationship("Role", back_populates="users")

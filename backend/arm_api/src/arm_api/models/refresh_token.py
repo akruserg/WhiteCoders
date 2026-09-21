@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 
 class RefreshToken(db.Model):
@@ -8,7 +10,7 @@ class RefreshToken(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     user_id = db.Column(
         db.UUID(as_uuid=True),
@@ -16,9 +18,9 @@ class RefreshToken(db.Model):
         nullable=False,
     )
     token_hash = db.Column(db.String(128), nullable=False, unique=True)
-    issued_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
-    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
-    revoked_at = db.Column(db.DateTime(timezone=True))
+    issued_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    expires_at = db.Column(UTCDateTime(), nullable=False)
+    revoked_at = db.Column(UTCDateTime())
     user_agent = db.Column(db.String(255))
     ip = db.Column(db.String(64))
 

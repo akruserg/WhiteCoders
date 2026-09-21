@@ -341,10 +341,14 @@ def write_audit(
 
     # Без блокировки два воркера читают один и тот же prev_hash и цепочка
     # раздваивается. Блокировка снимается вместе с транзакцией.
-    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": AUDIT_LOCK_KEY})
-    prev_hash = session.execute(
-        select(AuditLog.entry_hash).order_by(AuditLog.id.desc()).limit(1)
-    ).scalar()
+    last = select(AuditLog.entry_hash).order_by(AuditLog.id.desc()).limit(1)
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": AUDIT_LOCK_KEY}
+        )
+    else:  # без advisory-lock: блокируем последнюю запись цепочки
+        last = last.with_for_update()
+    prev_hash = session.execute(last).scalar()
 
     ts = _now()
     entry = AuditLog(

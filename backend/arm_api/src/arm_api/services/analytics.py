@@ -216,8 +216,9 @@ def session_results(session_id):
 
 def error_heatmap(session_id=None, group_id=None, category_id=None, teacher_id=None):
     where = [Attempt.status.in_(_EVALUATED)]
+    field_expr = func.coalesce(AttemptError.field_key, "-")
     stmt = select(
-        func.coalesce(AttemptError.field_key, "-"),
+        field_expr,
         AttemptError.kind,
         func.count(AttemptError.id),
     ).join(Attempt, Attempt.id == AttemptError.attempt_id)
@@ -235,7 +236,7 @@ def error_heatmap(session_id=None, group_id=None, category_id=None, teacher_id=N
 
     rows = db.session.execute(
         stmt.where(and_(*where))
-        .group_by(AttemptError.field_key, AttemptError.kind)
+        .group_by(field_expr, AttemptError.kind)
         .order_by(func.count(AttemptError.id).desc())
         .limit(500)
     ).all()

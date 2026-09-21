@@ -1,7 +1,9 @@
+import uuid
+
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, utcnow
 
 
 class InsightKind(enum.Enum):
@@ -16,7 +18,7 @@ class Insight(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     kind = db.Column(
         db.Enum(InsightKind, name="insight_kind", native_enum=True), nullable=False
@@ -40,7 +42,7 @@ class Insight(db.Model):
     confidence = db.Column(db.Numeric(4, 3))
     ai_model = db.Column(db.String(64))
     is_published = db.Column(db.Boolean, nullable=False, default=False)
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     session = db.relationship(
         "TrainingSession", back_populates="insights", foreign_keys=[session_id]

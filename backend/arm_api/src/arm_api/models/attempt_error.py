@@ -1,6 +1,7 @@
 import enum
 
 from ..core.extensions import db
+from .mixins import BigIntPK
 
 
 class ErrorKind(enum.Enum):
@@ -14,7 +15,7 @@ class ErrorKind(enum.Enum):
 class AttemptError(db.Model):
     __tablename__ = "attempt_errors"
 
-    id = db.Column(db.BigInteger, primary_key=True)
+    id = db.Column(BigIntPK, primary_key=True)
     attempt_id = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("attempts.id", ondelete="CASCADE"),

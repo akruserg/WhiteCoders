@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, pg_only, utcnow
 
 
 class GradingProfile(db.Model):
@@ -8,7 +10,7 @@ class GradingProfile(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     name = db.Column(db.String(128), nullable=False)
     owner_id = db.Column(
@@ -35,9 +37,9 @@ class GradingProfile(db.Model):
     error_weights = db.Column(JSONB, nullable=False, default=dict)
 
     is_default = db.Column(db.Boolean, nullable=False, default=False)
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        UTCDateTime(), nullable=False, default=utcnow, onupdate=utcnow
     )
 
     owner = db.relationship("User", back_populates="grading_profiles")
@@ -47,11 +49,13 @@ class GradingProfile(db.Model):
 
     __table_args__ = (
         db.Index("ix_grading_profiles_owner_id", "owner_id"),
-        db.Index(
-            "uq_grading_profiles_single_default",
-            "is_default",
-            unique=True,
-            postgresql_where=db.text("is_default"),
+        *pg_only(
+            db.Index(
+                "uq_grading_profiles_single_default",
+                "is_default",
+                unique=True,
+                postgresql_where=db.text("is_default"),
+            )
         ),
         db.CheckConstraint(
             "pass_score >= 0 AND pass_score <= 100",

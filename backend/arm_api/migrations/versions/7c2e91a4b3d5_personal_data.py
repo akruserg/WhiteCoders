@@ -14,8 +14,12 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("users", sa.Column("pd_consent_at", sa.DateTime(timezone=True)))
-    op.add_column("users", sa.Column("anonymized_at", sa.DateTime(timezone=True)))
+    # на не-PostgreSQL столбцы уже созданы из моделей в первой миграции
+    have = {c["name"] for c in sa.inspect(op.get_bind()).get_columns("users")}
+    if "pd_consent_at" not in have:
+        op.add_column("users", sa.Column("pd_consent_at", sa.DateTime(timezone=True)))
+    if "anonymized_at" not in have:
+        op.add_column("users", sa.Column("anonymized_at", sa.DateTime(timezone=True)))
 
 
 def downgrade():

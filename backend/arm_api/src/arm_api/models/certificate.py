@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, utcnow
 
 
 class Certificate(db.Model):
@@ -8,7 +10,7 @@ class Certificate(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     number = db.Column(db.String(64), nullable=False, unique=True)
     user_id = db.Column(
@@ -25,8 +27,8 @@ class Certificate(db.Model):
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
     score = db.Column(db.Numeric(5, 2), nullable=False)
-    issued_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
-    valid_until = db.Column(db.DateTime(timezone=True))
+    issued_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    valid_until = db.Column(UTCDateTime())
     file_path = db.Column(db.String(512))
     payload = db.Column(JSONB, nullable=False, default=dict)
 

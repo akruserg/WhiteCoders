@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, pg_only, utcnow
 
 
 class CardTemplate(db.Model):
@@ -8,24 +10,26 @@ class CardTemplate(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     code = db.Column(db.String(64), nullable=False)
     name = db.Column(db.String(255), nullable=False)
     version = db.Column(db.SmallInteger, nullable=False, default=1)
     fields = db.Column(JSONB, nullable=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     scenarios = db.relationship("Scenario", back_populates="template")
 
     __table_args__ = (
         db.UniqueConstraint("code", "version", name="uq_card_templates_code_version"),
-        db.Index(
-            "uq_card_templates_active_code",
-            "code",
-            unique=True,
-            postgresql_where=db.text("is_active"),
+        *pg_only(
+            db.Index(
+                "uq_card_templates_active_code",
+                "code",
+                unique=True,
+                postgresql_where=db.text("is_active"),
+            )
         ),
     )
 

@@ -1,7 +1,7 @@
 import enum
 
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import JSONB, UTCDateTime, utcnow
 
 
 class SettingScope(enum.Enum):
@@ -31,7 +31,7 @@ class SystemSetting(db.Model):
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        UTCDateTime(), nullable=False, default=utcnow, onupdate=utcnow
     )
 
     editor = db.relationship("User")

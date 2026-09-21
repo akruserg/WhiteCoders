@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 
 class Backup(db.Model):
@@ -8,10 +10,10 @@ class Backup(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
-    started_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
-    finished_at = db.Column(db.DateTime(timezone=True))
+    started_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
+    finished_at = db.Column(UTCDateTime())
     status = db.Column(db.String(16), nullable=False, default="running")
     kind = db.Column(db.String(16), nullable=False, default="full")
     is_automatic = db.Column(db.Boolean, nullable=False, default=True)

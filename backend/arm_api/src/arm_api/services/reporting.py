@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
 
@@ -87,6 +88,16 @@ def available_formats():
     return formats
 
 
+def _uuid(value, what="Идентификатор"):
+    """UUID из params отчета (там строка). None остается None."""
+    if value in (None, ""):
+        return None
+    try:
+        return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+    except ValueError:
+        raise ValueError(f"{what} должен быть UUID")
+
+
 class Namer:
     """Подставляет вместо ФИО «Обучающийся N», если отчет нужно обезличить
     (params.anonymize = true). Нумерация одинакова внутри одного отчета."""
@@ -113,13 +124,15 @@ def build(kind, session_id=None, params=None):
     if kind is ReportKind.SESSION:
         return _session_report(session_id, namer)
     if kind is ReportKind.STUDENT_PROGRESS:
-        return _student_report(params.get("user_id"), session_id, namer)
+        return _student_report(
+            _uuid(params.get("user_id"), "user_id"), session_id, namer
+        )
     if kind is ReportKind.GROUP_PROGRESS:
-        return _group_report(params.get("group_id"), namer)
+        return _group_report(_uuid(params.get("group_id"), "group_id"), namer)
     if kind is ReportKind.ERROR_HEATMAP:
         data = analytics.error_heatmap(
             session_id=session_id,
-            group_id=params.get("group_id"),
+            group_id=_uuid(params.get("group_id"), "group_id"),
             category_id=params.get("category_id"),
         )
         rows = [["Поле карточки", "Вид замечания", "Количество"]]

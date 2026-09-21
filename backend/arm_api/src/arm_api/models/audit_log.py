@@ -1,12 +1,12 @@
 from ..core.extensions import db
-from .mixins import JSONB, utcnow
+from .mixins import BigIntPK, JSONB, UTCDateTime, utcnow
 
 
 class AuditLog(db.Model):
     __tablename__ = "audit_log"
 
-    id = db.Column(db.BigInteger, primary_key=True)
-    ts = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    id = db.Column(BigIntPK, primary_key=True)
+    ts = db.Column(UTCDateTime(), nullable=False, default=utcnow)
     user_id = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("users.id", ondelete="SET NULL"),

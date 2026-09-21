@@ -1,5 +1,7 @@
+import uuid
+
 from ..core.extensions import db
-from .mixins import utcnow
+from .mixins import UTCDateTime, utcnow
 
 
 class Material(db.Model):
@@ -8,7 +10,7 @@ class Material(db.Model):
     id = db.Column(
         db.UUID(as_uuid=True),
         primary_key=True,
-        server_default=db.text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
     title = db.Column(db.String(255), nullable=False)
     mime_type = db.Column(db.String(64), nullable=False)
@@ -18,13 +20,13 @@ class Material(db.Model):
     version = db.Column(db.SmallInteger, nullable=False, default=1)
 
     is_indexed = db.Column(db.Boolean, nullable=False, default=False)
-    indexed_at = db.Column(db.DateTime(timezone=True))
+    indexed_at = db.Column(UTCDateTime())
     category_id = db.Column(db.Integer, db.ForeignKey("incident_categories.id"))
     uploaded_by = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("users.id", ondelete="SET NULL"),
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = db.Column(UTCDateTime(), nullable=False, default=utcnow)
 
     category = db.relationship("IncidentCategory", back_populates="materials")
     uploader = db.relationship("User", back_populates="uploaded_materials")

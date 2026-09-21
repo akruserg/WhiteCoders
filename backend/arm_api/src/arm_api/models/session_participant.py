@@ -1,4 +1,5 @@
 from ..core.extensions import db
+from .mixins import UTCDateTime
 
 
 class SessionParticipant(db.Model):
@@ -14,8 +15,8 @@ class SessionParticipant(db.Model):
         db.ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    joined_at = db.Column(db.DateTime(timezone=True))
-    left_at = db.Column(db.DateTime(timezone=True))
+    joined_at = db.Column(UTCDateTime())
+    left_at = db.Column(UTCDateTime())
 
     session = db.relationship("TrainingSession", back_populates="participants")
     user = db.relationship("User", back_populates="session_participations")

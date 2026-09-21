@@ -22,6 +22,10 @@ dependencies = [
     "pymorphy3-dicts-ru (>=2.4.417150.4580142,<3.0.0)",
 ]
 
+[project.optional-dependencies]
+# драйвер для MySQL/MariaDB: DATABASE_URL=mysql+pymysql://user:pass@host/db
+mysql = ["pymysql (>=1.1.0,<2.0.0)", "cryptography (>=43.0.0)"]
+
 [tool.poetry]
 packages = [{include = "arm_api", from = "src"}]
 
