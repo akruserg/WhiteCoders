@@ -1,0 +1,29 @@
+/* Палитра снята с макетов APM-112_Figma (38 экранов) */
+:root {
+  --c-ink: #1f2326;
+  --c-ink-2: #4a5157;
+  --c-muted: #6b7378;
+  --c-line: #d5dadd;
+  --c-line-2: #b9bfc3;
+  --c-bg: #cbd2d6;        /* фон рабочей области */
+  --c-panel: #efefef;     /* карточки и панели */
+  --c-panel-2: #f6f7f7;
+  --c-white: #ffffff;
+  --c-dark: #22292e;      /* боковое меню, шапка часов */
+  --c-dark-2: #2f353a;
+  --c-accent: #ec653b;    /* оранжевый: кнопки, панель служб */
+  --c-accent-dark: #d4522a;
+  --c-blue: #1c7cc0;
+  --c-green: #3e9b5f;
+  --c-green-bg: #d6eedd;
+  --c-green-ink: #1f6b3a;
+  --c-red: #e5322d;
+  --c-red-bg: #fbd9d7;
+  --c-yellow: #f1b73f;
+  --c-yellow-bg: #fbecc7;
+  --c-blue-bg: #d3e6f5;
+
+  --font: "Roboto", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --radius: 3px;
+  --sidebar-w: 264px;
+}
