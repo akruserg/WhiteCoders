@@ -15,7 +15,7 @@ GET  /certificates             - список сертификатов
 
 import os
 import uuid as uuid_mod
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, request, send_file
 from sqlalchemy import or_, select
@@ -45,7 +45,7 @@ from ..models import (
     User,
 )
 from ..schemas import CertificateIn, InsightGenerateIn, ReportCreateIn
-from ..services import ai, alerts, analytics, reporting, settings
+from ..services import ai, alerts, analytics, certificates, reporting, settings
 from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
 reports_bp = Blueprint("reports", __name__)
@@ -352,33 +352,9 @@ def issue_certificate():
     principal = require("certificate.issue")
     payload = body(CertificateIn)
     user = get_or_404(User, payload.user_id, "Пользователь")
-
-    progress = analytics.user_progress(user.id, payload.session_id)
-    score = progress["summary"]["avg_score"]
-    if not progress["summary"]["attempts"]:
-        raise ApiError("У обучающегося нет оцененных карточек", 409)
-
-    number = (
-        f"АРМ112-{datetime.now(timezone.utc):%Y}-{uuid_mod.uuid4().hex[:8].upper()}"
+    certificate = certificates.issue(
+        user, payload.session_id, principal.id, payload.valid_months
     )
-    certificate = Certificate(
-        number=number,
-        user_id=user.id,
-        session_id=payload.session_id,
-        issued_by=principal.id,
-        score=score,
-        valid_until=datetime.now(timezone.utc)
-        + timedelta(days=30 * payload.valid_months),
-        payload={"summary": progress["summary"], "full_name": user.full_name},
-    )
-    db.session.add(certificate)
-    db.session.flush()
-    try:
-        certificate.file_path = reporting.render_certificate(
-            certificate, os.path.join(current_app.config["REPORTS_DIR"], "certificates")
-        )
-    except (RuntimeError, OSError) as exc:  # сертификат выдан, файл можно собрать позже
-        current_app.logger.warning("PDF сертификата %s не создан: %s", number, exc)
     write_audit(
         db.session,
         request,
@@ -386,7 +362,7 @@ def issue_certificate():
         "certificate.issue",
         "certificate",
         certificate.id,
-        {"user_id": str(user.id), "score": score},
+        {"user_id": str(user.id), "score": float(certificate.score)},
     )
     commit()
     return item(certificate, 201)

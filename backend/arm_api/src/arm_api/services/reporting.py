@@ -233,7 +233,55 @@ def _session_report(session_id, namer):
                 item["grammar_errors"],
             ]
         )
-    return f"Отчет о практическом занятии: {session.title}", data, rows
+    title = f"Отчет о практическом занятии: {session.title}"
+    exam = _attestation_block(session, namer)
+    if exam:
+        data["attestation"] = exam
+        rows += attestation_rows(exam)
+        title = f"Протокол аттестации: {session.title}"
+    return title, data, rows
+
+
+def attestation_rows(exam):
+    """Строки протокола аттестации для таблицы отчета (без обращения к БД)."""
+    cfg = exam["config"]
+    rows = [
+        [],
+        [
+            f"Протокол аттестации. Проходной балл: {cfg['pass_score']:g}, "
+            f"минимум карточек: {cfg['min_attempts']}"
+        ],
+        ["Обучающийся", "Карточек", "Средний балл", "Результат", "Сертификат"],
+    ]
+    for s in exam["students"]:
+        if not s["enough_attempts"]:
+            result = "недостаточно карточек"
+        else:
+            result = "аттестован" if s["passed"] else "не аттестован"
+        rows.append(
+            [
+                s["full_name"],
+                s["attempts"],
+                s["average"],
+                result,
+                s["certificate"] or "",
+            ]
+        )
+    rows.append(["Итого аттестовано", f"{exam['passed']} из {exam['total']}"])
+    return rows
+
+
+def _attestation_block(session, namer):
+    from . import attestation  # позже, чтобы не было циклического импорта
+
+    if attestation.config(session) is None:
+        return None
+    exam = attestation.summarize(session)
+    for student in exam["students"]:
+        student["full_name"] = namer.name(student["user_id"], student["full_name"])
+        if namer.anonymize:
+            student["user_id"] = None
+    return exam
 
 
 def _student_report(user_id, session_id=None, namer=None):

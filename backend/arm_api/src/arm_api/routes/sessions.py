@@ -64,6 +64,7 @@ from ..schemas import (
 from ..services import (
     ai,
     analytics,
+    attestation,
     card_schema,
     grammar,
     integrations,
@@ -186,6 +187,24 @@ def _pick_scenario(session, user):
     return random.choice(fresh or pool)
 
 
+def _session_settings(channel, raw_attestation, current=None):
+    """settings занятия: канал и (если задан) проверенные параметры аттестации."""
+    settings_ = {**(current or {}), "channel": channel}
+    if raw_attestation is not None:
+        cfg, errors = attestation.normalize(
+            raw_attestation, current_app.config["DEFAULT_PASS_SCORE"]
+        )
+        if errors:
+            raise ApiError(
+                "Параметры аттестации некорректны",
+                422,
+                code="validation_error",
+                details={"attestation": errors},
+            )
+        settings_["attestation"] = cfg
+    return settings_
+
+
 @sessions_bp.post("/sessions")
 def create_session():
     principal = require("session.manage")
@@ -204,7 +223,7 @@ def create_session():
         difficulty_min=payload.difficulty_min,
         difficulty_max=payload.difficulty_max,
         time_limit_sec=payload.time_limit_sec,
-        settings={"channel": payload.channel},
+        settings=_session_settings(payload.channel, payload.attestation),
     )
     db.session.add(session)
     db.session.flush()
@@ -282,8 +301,11 @@ def update_session(session_id):
             setattr(session, name, value)
     if payload.category_ids is not None:
         _set_categories(session, payload.category_ids)
-    if payload.channel:
-        session.settings = {**(session.settings or {}), "channel": payload.channel}
+    if payload.channel or payload.attestation is not None:
+        channel = payload.channel or (session.settings or {}).get("channel", "text")
+        session.settings = _session_settings(
+            channel, payload.attestation, session.settings
+        )
     if session.difficulty_min > session.difficulty_max:
         raise ApiError("difficulty_min не может превышать difficulty_max", 422)
 
@@ -395,6 +417,7 @@ def finish_session(session_id):
                 call.finish_at = session.finished_at
                 hangups.append(call.sip_call_id)
 
+    exam = attestation.finalize(session, principal.id)
     write_audit(
         db.session,
         request,
@@ -402,12 +425,30 @@ def finish_session(session_id):
         "session.finish",
         "session",
         session.id,
-        {"expired_attempts": expired},
+        {
+            "expired_attempts": expired,
+            **(
+                {"attestation_passed": exam["passed"], "of": exam["total"]}
+                if exam
+                else {}
+            ),
+        },
     )
     commit()
     for sip_call_id in hangups:  # сетевые вызовы - после фиксации в БД
         integrations.hangup(sip_call_id)
     return ok(_session_view(session, principal))
+
+
+@sessions_bp.get("/sessions/<uuid:session_id>/attestation")
+def attestation_protocol(session_id):
+    principal = require("session.manage")
+    session = _owned_session(session_id, principal)
+    if attestation.config(session) is None:
+        raise ApiError(
+            "Занятие проводится не в режиме аттестации", 409, code="not_attestation"
+        )
+    return ok(attestation.summarize(session))
 
 
 @sessions_bp.get("/sessions/<uuid:session_id>/monitor")
@@ -792,6 +833,9 @@ def process_submission(attempt, principal, answer, actions, now, req):
 
     attempt.score = round(verdict.score, 2)
     attempt.passed = verdict.passed
+    exam = attestation.config(session)
+    if exam:  # проходной балл аттестации фиксирован в занятии
+        attempt.passed = float(attempt.score) >= exam["pass_score"]
     attempt.evaluation = {
         **verdict.to_dict(),
         "scenario_title": scenario.title,
@@ -869,7 +913,18 @@ def submit_card(attempt_id):
     )
     commit()
     integrations.hangup(hangup_id)  # сетевой вызов - после фиксации в БД
-    return ok(_attempt_result(attempt))
+    return ok(_visible_result(attempt, principal))
+
+
+def _visible_result(attempt, principal):
+    """Результат карточки для данного пользователя: во время аттестации обучающийся
+    видит только балл и зачет (services/attestation.py)."""
+    result = _attempt_result(attempt)
+    if is_student(principal):
+        session = db.session.get(TrainingSession, attempt.session_id)
+        if attestation.is_active(session):
+            return attestation.redact(result)
+    return result
 
 
 def _attempt_result(attempt):
@@ -901,7 +956,7 @@ def get_attempt(attempt_id):
         raise ApiError("Результаты других обучающихся недоступны", 403)
     if is_student(principal) and attempt.status is not AttemptStatus.EVALUATED:
         raise ApiError("Карточка еще не оценена", 409)
-    result = _attempt_result(attempt)
+    result = _visible_result(attempt, principal)
     if not is_student(principal):
         scenario = db.session.get(Scenario, attempt.scenario_id)
         result["answer"] = attempt.answer

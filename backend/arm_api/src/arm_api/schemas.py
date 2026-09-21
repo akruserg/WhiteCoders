@@ -377,6 +377,9 @@ class SessionCreate(Schema):
     time_limit_sec = Field("int", nullable=True, min=5, max=3600)
     grading_profile_id = Field("uuid", nullable=True)
     channel = Field("str", default="text", choices=["text", "voip"])
+    attestation = Field(
+        "dict", nullable=True
+    )  # режим аттестации, см. services/attestation.py
 
 
 class SessionUpdate(Schema):
@@ -387,6 +390,7 @@ class SessionUpdate(Schema):
     time_limit_sec = Field("int", min=5, max=3600)
     grading_profile_id = Field("uuid", nullable=True)
     channel = Field("str", choices=["text", "voip"])
+    attestation = Field("dict", nullable=True)
 
 
 class SubmitIn(Schema):
