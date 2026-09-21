@@ -119,7 +119,7 @@ def check_role_permissions(role_code, codes):
 
 # Администратору доступны только отчеты о системе: результаты обучающихся
 # (персональные данные) он видеть без необходимости не должен
-ADMIN_REPORT_KINDS = {"system_usage", "security_audit"}
+ADMIN_REPORT_KINDS = {"system_usage", "security_audit", "system_errors"}
 
 
 def hash_password(password):

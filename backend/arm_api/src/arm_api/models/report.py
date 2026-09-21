@@ -20,6 +20,7 @@ class ReportKind(enum.Enum):
     ERROR_HEATMAP = "error_heatmap"
     SYSTEM_USAGE = "system_usage"
     SECURITY_AUDIT = "security_audit"
+    SYSTEM_ERRORS = "system_errors"
 
 
 class Report(db.Model):

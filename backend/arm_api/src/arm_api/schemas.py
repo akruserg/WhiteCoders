@@ -414,6 +414,7 @@ class ReportCreateIn(Schema):
             "error_heatmap",
             "system_usage",
             "security_audit",
+            "system_errors",
         ],
     )
     format = Field("str", default="json", choices=["json", "csv", "xlsx", "pdf"])

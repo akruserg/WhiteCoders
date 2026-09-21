@@ -6,16 +6,21 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..core.extensions import db
 from ..models import (
+    Alert,
     Attempt,
     AttemptError,
     AuditLog,
+    Backup,
     Group,
+    Report,
     ReportKind,
+    ReportStatus,
     Scenario,
+    SystemEvent,
     TrainingSession,
     User,
 )
@@ -146,6 +151,8 @@ def build(kind, session_id=None, params=None):
         return "Использование системы", data, rows
     if kind is ReportKind.SECURITY_AUDIT:
         return _audit_report(params)
+    if kind is ReportKind.SYSTEM_ERRORS:
+        return _errors_report(params)
     raise ValueError(f"Неизвестный вид отчета: {kind}")
 
 
@@ -277,6 +284,120 @@ def _group_report(group_id, namer=None):
         for s in students
     ]
     return f"Прогресс группы: {group.name}", data, rows
+
+
+def errors_rows(data):
+    """Таблица отчета об ошибках и сбоях из собранных данных (без обращения к БД)."""
+    rows = [["Раздел", "Время", "Компонент / уровень", "Описание", "Подробности"]]
+    for a in data["alerts"]:
+        rows.append(
+            [
+                "Оповещение",
+                a["first_seen_at"],
+                f"{a['component']} / {a['severity']}",
+                a["title"],
+                f"повторов: {a['occurrences']}, статус: {a['status']}",
+            ]
+        )
+    for e in data["events"]:
+        rows.append(
+            ["Событие", e["ts"], f"{e['component']} / {e['level']}", e["message"], ""]
+        )
+    for b in data["failed_backups"]:
+        rows.append(
+            [
+                "Резервная копия",
+                b["started_at"],
+                "backup / failed",
+                b["error"] or "",
+                "",
+            ]
+        )
+    for f in data["failed_reports"]:
+        rows.append(
+            ["Отчет", f["created_at"], f"reports / {f['kind']}", f["error"] or "", ""]
+        )
+    summary = data["summary"]
+    rows.append(
+        ["Итого", "", "", "", ", ".join(f"{k}: {v}" for k, v in summary.items())]
+    )
+    return rows
+
+
+def _errors_report(params):
+    """Отчет об ошибках и сбоях за период (ТЗ: отчеты администратора об ошибках и сбоях)."""
+    days = min(max(int(params.get("days", 30)), 1), 365)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    limit = 2000
+    alerts = list(
+        db.session.execute(
+            select(Alert)
+            .where(Alert.last_seen_at >= since)
+            .order_by(Alert.first_seen_at.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    events = list(
+        db.session.execute(
+            select(SystemEvent)
+            .where(
+                SystemEvent.ts >= since, SystemEvent.level.in_(["error", "critical"])
+            )
+            .order_by(SystemEvent.ts.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    backups = list(
+        db.session.execute(
+            select(Backup)
+            .where(Backup.status == "failed", Backup.started_at >= since)
+            .order_by(Backup.started_at.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    reports = list(
+        db.session.execute(
+            select(Report)
+            .where(Report.status == ReportStatus.FAILED, Report.created_at >= since)
+            .order_by(Report.created_at.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    failed_logins = db.session.execute(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.ts >= since, AuditLog.action == "auth.login_failed")
+    ).scalar_one()
+    by_component = {}
+    for a in alerts:
+        by_component[a.component] = by_component.get(a.component, 0) + 1
+    data = {
+        "since": since.isoformat(),
+        "days": days,
+        "alerts": [a.to_dict() for a in alerts],
+        "alerts_by_component": by_component,
+        "events": [e.to_dict() for e in events],
+        "failed_backups": [
+            {"started_at": b.started_at.isoformat(), "error": b.error} for b in backups
+        ],
+        "failed_reports": [
+            {
+                "created_at": r.created_at.isoformat(),
+                "kind": r.kind.value,
+                "error": r.error,
+            }
+            for r in reports
+        ],
+        "summary": {
+            "alerts": len(alerts),
+            "critical_alerts": sum(1 for a in alerts if a.severity.value == "critical"),
+            "error_events": len(events),
+            "failed_backups": len(backups),
+            "failed_reports": len(reports),
+            "failed_logins": failed_logins,
+        },
+    }
+    return f"Ошибки и сбои за {days} дн.", data, errors_rows(data)
 
 
 def _audit_report(params):
