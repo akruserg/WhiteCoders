@@ -27,6 +27,9 @@ from ..models import (
 from . import analytics
 
 SUPPORTED_FORMATS = ("json", "csv", "xlsx", "pdf")
+# PDF с десятками тысяч строк верстается десятки секунд (ТЗ: отчет не более 30 с) и
+# бесполезен для чтения: сверх лимита таблица сокращается, полные данные - в csv/xlsx
+PDF_MAX_ROWS = 3000
 
 
 def _xlsx_available():
@@ -172,21 +175,46 @@ def _session_report(session_id, namer):
         ).scalars()
     )
 
+    # замечания всего занятия одним запросом: по запросу на карточку отчет по
+    # 20 тысячам карточек строился десятки секунд (норма ТЗ: не более 30 с)
+    errors_by_attempt = {}
+    for error in db.session.execute(
+        select(AttemptError)
+        .join(Attempt, Attempt.id == AttemptError.attempt_id)
+        .where(Attempt.session_id == session.id)
+        .order_by(AttemptError.id)
+    ).scalars():
+        errors_by_attempt.setdefault(error.attempt_id, []).append(error)
+
+    # названия и имена - двумя запросами, а не по запросу на карточку
+    titles = dict(
+        db.session.execute(
+            select(Scenario.id, Scenario.title).where(
+                Scenario.id.in_({a.scenario_id for a in attempts})
+            )
+        ).all()
+    )
+    names = dict(
+        db.session.execute(
+            select(User.id, User.full_name).where(
+                User.id.in_({a.user_id for a in attempts})
+            )
+        ).all()
+    )
+
     details = []
     for attempt in attempts:
-        scenario = db.session.get(Scenario, attempt.scenario_id)
-        user = db.session.get(User, attempt.user_id)
-        errors = list(
-            db.session.execute(
-                select(AttemptError).where(AttemptError.attempt_id == attempt.id)
-            ).scalars()
-        )
+        errors = errors_by_attempt.get(attempt.id, [])
         details.append(
             {
                 "attempt_id": str(attempt.id),
-                "user": namer.name(user.id, user.full_name) if user else None,
+                "user": (
+                    namer.name(attempt.user_id, names[attempt.user_id])
+                    if attempt.user_id in names
+                    else None
+                ),
                 "seq": attempt.seq,
-                "scenario": scenario.title if scenario else None,
+                "scenario": titles.get(attempt.scenario_id),
                 "score": attempt.final_score,
                 "passed": attempt.passed,
                 "duration_sec": round((attempt.duration_ms or 0) / 1000, 1),
@@ -475,6 +503,17 @@ def _audit_report(params):
     return f"Аудит безопасности за {days} дн.", data, rows
 
 
+def pdf_rows(rows, limit=PDF_MAX_ROWS):
+    """Строки для PDF: (строки, сколько строк пропущено). Блоки после пустой строки
+    (например, протокол аттестации) сохраняются целиком."""
+    if len(rows) <= limit:
+        return rows, 0
+    tail_start = next((i for i, row in enumerate(rows) if i and not row), len(rows))
+    tail = rows[tail_start:]
+    head = rows[: max(limit - len(tail), 1)]
+    return head + tail, max(tail_start - len(head), 0)
+
+
 def render(fmt, title, data, rows, target_dir, filename):
     os.makedirs(target_dir, exist_ok=True)
     path = os.path.join(target_dir, f"{filename}.{fmt}")
@@ -514,6 +553,7 @@ def render(fmt, title, data, rows, target_dir, filename):
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
         regular, bold = _pdf_fonts()
+        rows, omitted = pdf_rows(rows)
         cell_style = ParagraphStyle("cell", fontName=regular, fontSize=7, leading=9)
         title_style = ParagraphStyle("title", fontName=bold, fontSize=16, leading=20)
         doc = SimpleDocTemplate(path, pagesize=landscape(A4))
@@ -534,7 +574,16 @@ def render(fmt, title, data, rows, target_dir, filename):
                 ]
             )
         )
-        doc.build([Paragraph(escape(title), title_style), table])
+        story = [Paragraph(escape(title), title_style), table]
+        if omitted:
+            story.append(
+                Paragraph(
+                    f"Показана часть таблицы: пропущено строк {omitted}. "
+                    "Полный перечень - в форматах csv, xlsx и json.",
+                    cell_style,
+                )
+            )
+        doc.build(story)
         return path
 
     raise RuntimeError(f"Неподдерживаемый формат: {fmt}")

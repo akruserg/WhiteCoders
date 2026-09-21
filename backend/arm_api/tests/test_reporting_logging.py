@@ -132,3 +132,18 @@ def test_system_errors_is_an_admin_report_kind():
 
     assert ReportKind("system_errors") and "system_errors" in ADMIN_REPORT_KINDS
     assert "system_errors" in ReportCreateIn._fields["kind"].choices
+
+
+def test_pdf_rows_are_limited_but_keep_trailing_sections():
+    from arm_api.services.reporting import pdf_rows
+
+    header = ["h"]
+    body = [[i] for i in range(100)]
+    protocol = [[], ["Протокол"], ["итого"]]
+    rows = [header] + body + protocol
+    assert pdf_rows(rows, limit=1000) == (rows, 0)
+    cut, omitted = pdf_rows(rows, limit=20)
+    assert len(cut) == 20 and omitted == 84  # 100 строк - 16 оставленных
+    assert cut[0] == header and cut[-3:] == protocol  # протокол не потерян
+    plain, skipped = pdf_rows([header] + body, limit=10)
+    assert len(plain) == 10 and skipped == 91 and plain[0] == header

@@ -10,6 +10,9 @@
 
     python tools/loadtest.py --base https://localhost --session <uuid> \
         --users-file users.csv --users 20 --duration 120 --insecure
+
+Параметр --ramp 15 подключает пользователей плавно за 15 секунд (обычная утренняя
+картина); без него все входят в одну секунду, это худший случай.
 """
 
 import argparse
@@ -116,6 +119,13 @@ def main():
     parser.add_argument("--users", type=int, default=20)
     parser.add_argument("--duration", type=int, default=120, help="секунд")
     parser.add_argument(
+        "--ramp",
+        type=int,
+        default=0,
+        help="за сколько секунд плавно подключить всех (0 - все сразу, худший случай: "
+        "вход тяжелый, пароль хэшируется PBKDF2)",
+    )
+    parser.add_argument(
         "--insecure", action="store_true", help="не проверять сертификат (стенд)"
     )
     args = parser.parse_args()
@@ -130,8 +140,10 @@ def main():
         for c in credentials
     ]
     started = time.time()
-    for t in threads:
+    for index, t in enumerate(threads):
         t.start()
+        if args.ramp and index + 1 < len(threads):
+            time.sleep(args.ramp / len(threads))
     for t in threads:
         t.join()
     elapsed = time.time() - started
