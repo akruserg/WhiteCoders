@@ -27,6 +27,9 @@ if [ "${RUN_SCHEDULER:-1}" = "1" ]; then
     python -c "from arm_api.services.backup import run_loop; run_loop()" &
 fi
 
+# параметры производительности, измененные администратором через /system/settings
+eval "$(python -m arm_api.services.settings perf-env 2>/dev/null || true)"
+
 echo "* entrypoint [arm_api] - запускаем gunicorn (узел ${NODE_ID:-$(hostname)})"
 exec gunicorn \
     --bind 0.0.0.0:5000 \

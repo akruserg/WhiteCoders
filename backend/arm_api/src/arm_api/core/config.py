@@ -25,12 +25,18 @@ class Config:
     SECRET_KEY = _required("SECRET_KEY")
     SQLALCHEMY_DATABASE_URI = _required("DATABASE_URL")
 
+    # performance: те же переменные читает entrypoint.sh (gunicorn) и engine ниже
+    GUNICORN_WORKERS = _int("GUNICORN_WORKERS", 4)
+    GUNICORN_THREADS = _int("GUNICORN_THREADS", 8)
+    GUNICORN_TIMEOUT = _int("GUNICORN_TIMEOUT", 300)
+    DB_POOL_SIZE = _int("DB_POOL_SIZE", 20)
+
     # database
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_size": _int("DB_POOL_SIZE", 20),
+        "pool_size": _int("DB_POOL_SIZE", 20),  # см. DB_POOL_SIZE выше
         "max_overflow": _int("DB_MAX_OVERFLOW", 20),
         "pool_pre_ping": True,
         "pool_recycle": 1800,

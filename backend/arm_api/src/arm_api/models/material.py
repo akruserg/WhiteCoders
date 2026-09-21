@@ -30,6 +30,9 @@ class Material(db.Model):
 
     category = db.relationship("IncidentCategory", back_populates="materials")
     uploader = db.relationship("User", back_populates="uploaded_materials")
+    chunks = db.relationship(
+        "MaterialChunk", back_populates="material", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         db.Index("ix_materials_category_id", "category_id"),

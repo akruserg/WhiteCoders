@@ -10,6 +10,7 @@ from .grading_profile import GradingProfile
 from .scenario import Scenario, ScenarioOrigin, ScenarioStatus
 from .scenario_correction import ScenarioCorrection
 from .material import Material
+from .material_chunk import MaterialChunk
 from .training_session import (
     QuestionSource,
     SessionMode,
@@ -49,6 +50,7 @@ __all__ = [
     "ScenarioStatus",
     "ScenarioCorrection",
     "Material",
+    "MaterialChunk",
     "TrainingSession",
     "SessionMode",
     "SessionStatus",

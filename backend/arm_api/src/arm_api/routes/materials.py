@@ -3,6 +3,8 @@ GET    /materials                - список (справочная база �
 POST   /materials                - загрузка файла (multipart/form-data)
 GET    /materials/{id}/download  - выгрузка файла
 DELETE /materials/{id}           - удаление неактуального материала
+POST   /materials/{id}/index     - разобрать материал на фрагменты для ИИ (база знаний)
+GET    /materials/search?q=      - поиск по базе знаний (что увидит ИИ при генерации)
 """
 
 import hashlib
@@ -19,6 +21,7 @@ from ..core.extensions import db
 from ..core.pagination import paginate
 from ..core.security import current_user, is_student, require, write_audit
 from ..models import IncidentCategory, Material
+from ..services import knowledge
 from ._helpers import commit, get_or_404, int_arg, item, ok
 
 materials_bp = Blueprint("materials", __name__)
@@ -130,6 +133,7 @@ def upload_material():
     )
     db.session.add(material)
     db.session.flush()
+    chunks = _index(material)
     write_audit(
         db.session,
         request,
@@ -137,23 +141,47 @@ def upload_material():
         "material.upload",
         "material",
         material.id,
-        {"size_bytes": size, "mime": mime},
+        {"size_bytes": size, "mime": mime, "chunks": chunks},
     )
     commit()
     return item(material, 201)
+
+
+def _index(material):
+    """Индексация для ИИ: is_indexed выставляется, только если нашелся текст."""
+    chunks = knowledge.index_material(material)
+    material.is_indexed = chunks > 0
+    material.indexed_at = datetime.now(timezone.utc) if chunks else None
+    return chunks
 
 
 @materials_bp.post("/materials/<uuid:material_id>/index")
 def index_material(material_id):
     principal = require("material.manage")
     material = get_or_404(Material, material_id, "Материал")
-    material.is_indexed = True
-    material.indexed_at = datetime.now(timezone.utc)
+    chunks = _index(material)
     write_audit(
-        db.session, request, principal, "material.index", "material", material.id
+        db.session,
+        request,
+        principal,
+        "material.index",
+        "material",
+        material.id,
+        {"chunks": chunks},
     )
     commit()
-    return item(material)
+    return ok({**material.to_dict(), "chunks": chunks})
+
+
+@materials_bp.get("/materials/search")
+def search_materials():
+    require("material.manage")
+    query = (request.args.get("q") or "").strip()
+    if len(query) < 2:
+        raise ApiError("Запрос q не короче 2 символов", 422)
+    category_id = int_arg("category_id")
+    limit = min(max(int_arg("limit") or 4, 1), 20)
+    return ok({"items": knowledge.search(query, category_id, limit)})
 
 
 @materials_bp.get("/materials/<uuid:material_id>/download")

@@ -7,6 +7,9 @@ POST   /users/{id}/block          - блокировка
 POST   /users/{id}/unblock        - разблокировка
 POST   /users/{id}/reset-password - сброс пароля администратором
 GET    /roles, GET /permissions   - справочники RBAC
+GET    /roles/matrix              - матрица прав: роли x права, с обязательными и запрещенными
+PUT    /roles/{code}/permissions  - заменить набор прав роли (с проверкой ограничений ТЗ)
+POST   /roles/{code}/permissions/reset - вернуть права роли по умолчанию
 CRUD   /groups                    - учебные группы и их состав
 """
 
@@ -20,7 +23,12 @@ from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.pagination import paginate
 from ..core.security import (
+    PERMISSIONS,
+    ROLE_FORBIDDEN,
+    ROLE_MUST_HAVE,
+    ROLE_PERMISSIONS,
     check_password_policy,
+    check_role_permissions,
     current_user,
     generate_mfa_secret,
     hash_password,
@@ -29,7 +37,14 @@ from ..core.security import (
     write_audit,
 )
 from ..models import Group, IncidentCategory, Permission, Role, User
-from ..schemas import GroupIn, MembersIn, PasswordResetIn, UserCreate, UserUpdate
+from ..schemas import (
+    GroupIn,
+    MembersIn,
+    PasswordResetIn,
+    RolePermissionsIn,
+    UserCreate,
+    UserUpdate,
+)
 from ..services.backup import require_recent_backup
 from ._helpers import body, commit, get_or_404, item, items, ok, uuid_arg
 
@@ -278,6 +293,99 @@ def anonymize_user(user_id):
 def list_roles():
     current_user()
     return items(list(db.session.execute(select(Role).order_by(Role.id)).scalars()))
+
+
+def _role_or_404(code):
+    role = _role_by_code(code)
+    if role is None:
+        raise ApiError("Роль не найдена", 404)
+    return role
+
+
+def _set_role_permissions(role, codes):
+    have = {p.code: p for p in db.session.execute(select(Permission)).scalars()}
+    role.permissions = [have[c] for c in sorted(set(codes)) if c in have]
+
+
+@users_bp.get("/roles/matrix")
+def roles_matrix():
+    require("user.manage")
+    roles = list(db.session.execute(select(Role).order_by(Role.id)).scalars())
+    return ok(
+        {
+            "permissions": [
+                {"code": code, "description": text}
+                for code, text in sorted(PERMISSIONS.items())
+            ],
+            "roles": [
+                {
+                    "code": role.code,
+                    "name": role.name,
+                    "permissions": sorted(p.code for p in role.permissions),
+                    "default": sorted(ROLE_PERMISSIONS.get(role.code, [])),
+                    "must_have": sorted(ROLE_MUST_HAVE.get(role.code, set())),
+                    "forbidden": sorted(ROLE_FORBIDDEN.get(role.code, set())),
+                }
+                for role in roles
+            ],
+        }
+    )
+
+
+@users_bp.put("/roles/<code>/permissions")
+def set_role_permissions(code):
+    principal = require("user.manage")
+    role = _role_or_404(code)
+    payload = body(RolePermissionsIn)
+    problems = check_role_permissions(role.code, payload.permissions)
+    if problems:
+        raise ApiError(
+            "Набор прав нарушает ограничения",
+            422,
+            code="role_rules_violated",
+            details={"problems": problems},
+        )
+    before = sorted(p.code for p in role.permissions)
+    _set_role_permissions(role, payload.permissions)
+    write_audit(
+        db.session,
+        request,
+        principal,
+        "role.permissions.update",
+        "role",
+        role.code,
+        {
+            "before": before,
+            "after": sorted(set(payload.permissions)),
+            "comment": payload.comment,
+        },
+    )
+    commit()
+    return ok(
+        {
+            **role.to_dict(),
+            "applies": "сразу: права проверяются по БД при каждом запросе",
+        }
+    )
+
+
+@users_bp.post("/roles/<code>/permissions/reset")
+def reset_role_permissions(code):
+    principal = require("user.manage")
+    role = _role_or_404(code)
+    before = sorted(p.code for p in role.permissions)
+    _set_role_permissions(role, ROLE_PERMISSIONS[role.code])
+    write_audit(
+        db.session,
+        request,
+        principal,
+        "role.permissions.reset",
+        "role",
+        role.code,
+        {"before": before},
+    )
+    commit()
+    return item(role)
 
 
 @users_bp.get("/permissions")

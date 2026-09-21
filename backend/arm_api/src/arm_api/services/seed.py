@@ -43,11 +43,17 @@ ROLES = {
 
 
 def seed_rbac():
+    """Роли и права. Матрицу администратор правит через API (PUT /roles/{code}/permissions),
+    поэтому при повторном запуске набор прав роли НЕ заменяется: роли получают
+    права по умолчанию только при создании, а существующие роли - только права,
+    которые появились в коде впервые."""
     have = {p.code: p for p in db.session.execute(select(Permission)).scalars()}
+    new_codes = set()
     for code, description in PERMISSIONS.items():
         if code not in have:
             have[code] = Permission(code=code, description=description)
             db.session.add(have[code])
+            new_codes.add(code)
     db.session.flush()
 
     for code, (role_id, name) in ROLES.items():
@@ -58,8 +64,12 @@ def seed_rbac():
             role = Role(id=role_id, code=code, name=name)
             db.session.add(role)
             db.session.flush()
-        # набор прав заменяется целиком, чтобы отозванные права не оставались
-        role.permissions = [have[p] for p in ROLE_PERMISSIONS[code]]
+            role.permissions = [have[p] for p in ROLE_PERMISSIONS[code]]
+            continue
+        granted = {p.code for p in role.permissions}
+        for p in ROLE_PERMISSIONS[code]:
+            if p in new_codes and p not in granted:
+                role.permissions.append(have[p])
     db.session.commit()
 
 
@@ -164,6 +174,10 @@ ENV_BACKED = {
     "ai.enabled": "AI_ENABLED",
     "ai.scoring_enabled": "AI_SCORING_ENABLED",
     "security.max_failed_logins": "MAX_FAILED_LOGINS",
+    "perf.gunicorn_workers": "GUNICORN_WORKERS",
+    "perf.gunicorn_threads": "GUNICORN_THREADS",
+    "perf.db_pool_size": "DB_POOL_SIZE",
+    "perf.request_timeout_sec": "GUNICORN_TIMEOUT",
 }
 
 

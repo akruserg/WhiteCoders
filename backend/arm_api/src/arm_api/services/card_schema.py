@@ -62,5 +62,11 @@ DEFAULT_SETTINGS = [
     ("backup.enabled", "backup", True, "Ежедневное резервное копирование и очистка журнала", False, False),
     ("ai.enabled", "ai", False, "Включить ИИ-модуль (генерация сценариев, инсайты)", False, True),
     ("ai.scoring_enabled", "ai", False, "Смысловая проверка текстовых полей нейросетью", False, True),
+    ("perf.gunicorn_workers", "performance", 4, "Процессов API на узле (после перезапуска узла)", False, True),
+    ("perf.gunicorn_threads", "performance", 8, "Потоков на процесс API (после перезапуска узла)", False, True),
+    ("perf.db_pool_size", "performance", 20, "Размер пула соединений с БД на процесс (после перезапуска узла)", False, True),
+    ("perf.request_timeout_sec", "performance", 300, "Предельное время запроса, с (после перезапуска узла)", False, True),
+    ("perf.max_active_sessions", "performance", 0, "Сколько занятий может идти одновременно (0 - без ограничения)", False, False),
+    ("perf.report_warn_sec", "performance", 30, "Отчет дольше этого времени открывает оповещение (норма ТЗ: 30 с)", False, False),
     ("security.max_failed_logins", "security", 5, "Неудачных входов до блокировки", False, True),
 ]  # fmt: skip

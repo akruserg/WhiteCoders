@@ -79,7 +79,8 @@ class TrainingSession(db.Model):
     )
     difficulty_min = db.Column(db.SmallInteger, nullable=False, default=1)
     difficulty_max = db.Column(db.SmallInteger, nullable=False, default=5)
-    time_limit_sec = db.Column(db.Integer, nullable=False, default=30)
+    # None - лимит не задан: берется из сценария, профиля, затем 30 с
+    time_limit_sec = db.Column(db.Integer)
     settings = db.Column(JSONB, nullable=False, default=dict)
     started_at = db.Column(UTCDateTime())
     finished_at = db.Column(UTCDateTime())

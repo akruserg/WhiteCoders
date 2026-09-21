@@ -229,6 +229,11 @@ class UserUpdate(Schema):
     category_ids = Field("list", item_type="int")
 
 
+class RolePermissionsIn(Schema):
+    permissions = Field("list", item_type="str", required=True)
+    comment = Field("str", default="", max_len=500)
+
+
 class PasswordResetIn(Schema):
     new_password = Field("str", required=True, min_len=10, max_len=256)
 
@@ -305,7 +310,7 @@ class ScenarioIn(Schema):
     legend = Field("dict", required=True)
     reference_card = Field("dict", required=True)
     reference_actions = Field("list", default=list)
-    time_limit_sec = Field("int", default=30, min=5, max=3600)
+    time_limit_sec = Field("int", nullable=True, min=5, max=3600)
     grading_profile_id = Field("uuid", nullable=True)
 
 
@@ -324,7 +329,7 @@ class ScenarioGenerateIn(Schema):
     count = Field("int", default=5, min=1, max=50)
     difficulty = Field("int", default=2, min=1, max=5)
     template_id = Field("uuid", nullable=True)
-    time_limit_sec = Field("int", default=30, min=5, max=3600)
+    time_limit_sec = Field("int", nullable=True, min=5, max=3600)
     hints = Field("str", default="", max_len=2000)
     location = Field(
         "str", default="", max_len=200
@@ -339,7 +344,7 @@ class ScenarioImportItem(Schema):
     legend = Field("dict", required=True)
     reference_card = Field("dict", required=True)
     reference_actions = Field("list", default=list)
-    time_limit_sec = Field("int", default=30, min=5, max=3600)
+    time_limit_sec = Field("int", nullable=True, min=5, max=3600)
 
 
 class ScenarioValidateIn(Schema):
@@ -369,7 +374,7 @@ class SessionCreate(Schema):
     category_ids = Field("list", item_type="int", default=list)
     difficulty_min = Field("int", default=1, min=1, max=5)
     difficulty_max = Field("int", default=5, min=1, max=5)
-    time_limit_sec = Field("int", default=30, min=5, max=3600)
+    time_limit_sec = Field("int", nullable=True, min=5, max=3600)
     grading_profile_id = Field("uuid", nullable=True)
     channel = Field("str", default="text", choices=["text", "voip"])
 

@@ -10,6 +10,7 @@ JSON-схемой, поэтому модель не может вернуть п
 """
 
 import json
+import logging
 import re
 from collections import Counter
 
@@ -18,6 +19,8 @@ from flask import current_app
 
 from ..core.errors import ApiError
 from . import card_schema, settings
+
+logger = logging.getLogger(__name__)
 
 RULES_MODEL = "rules-v1"
 
@@ -182,11 +185,16 @@ def _scenario_schema(field_keys):
     }
 
 
-def _scenario_prompt(category, difficulty, fields, hints, location=""):
+def _scenario_prompt(category, difficulty, fields, hints, location="", context=""):
     listing = "\n".join(f"- {f['key']}: {f['label']}" for f in fields)
     extra = f"\nПожелания преподавателя: {hints}" if hints else ""
     if location:
         extra += f"\nМесто происшествия (используй в адресе): {location}"
+    if context:
+        extra += (
+            "\nВыдержки из методических материалов (опирайся на них, "
+            f"не выдумывай регламент):\n{context}"
+        )
     return (
         f"Составь один учебный сценарий вызова по теме «{category.name}» "
         f"(код {category.code}). Сложность {difficulty} из 5: {_DIFFICULTY[difficulty]}.\n\n"
@@ -244,16 +252,31 @@ def _draft(raw, category, difficulty, fields, time_limit_sec, location=""):
     }
 
 
+def _safe_context(context_for, category):
+    """Сбой базы знаний не должен мешать генерации: тогда сценарий без выдержек."""
+    if context_for is None:
+        return ""
+    try:
+        return context_for(category) or ""
+    except Exception as exc:
+        logger.warning("база знаний недоступна: %s", exc)
+        return ""
+
+
 def generate_scenarios(
     categories,
     count=5,
     difficulty=2,
     template_fields=None,
-    time_limit_sec=30,
+    time_limit_sec=None,
     hints="",
     location="",
+    context_for=None,
 ):
-    """Черновики сценариев. По одному запросу на сценарий: надежнее на CPU."""
+    """Черновики сценариев. По одному запросу на сценарий: надежнее на CPU.
+
+    context_for(category) -> str: выдержки из загруженных материалов (база знаний).
+    """
     fields = [
         f for f in (template_fields or []) if isinstance(f, dict) and f.get("key")
     ]
@@ -268,7 +291,14 @@ def generate_scenarios(
         try:
             raw = _chat(
                 SYSTEM_METHODIST,
-                _scenario_prompt(category, difficulty, fields, hints, location),
+                _scenario_prompt(
+                    category,
+                    difficulty,
+                    fields,
+                    hints,
+                    location,
+                    _safe_context(context_for, category),
+                ),
                 schema,
             )
         except AiUnavailable as exc:
@@ -289,7 +319,7 @@ def generate_scenarios(
 # ------------------------------------------------------------------ коррекция по комментарию
 
 
-def apply_correction(scenario, comment):
+def apply_correction(scenario, comment, context=""):
     """Правит сценарий по комментарию преподавателя. Возвращает (правка, пояснение)."""
     if not is_enabled():
         return {}, "Модуль ИИ отключен, комментарий сохранен без автоматической правки"
@@ -314,7 +344,8 @@ def apply_correction(scenario, comment):
     user = (
         f"Текущий сценарий (JSON):\n{json.dumps(current, ensure_ascii=False)}\n\n"
         f"Комментарий преподавателя: {comment}\n\n"
-        "Внеси в сценарий только то, что просит комментарий, остальное оставь как есть. "
+        + (f"Выдержки из методических материалов:\n{context}\n\n" if context else "")
+        + "Внеси в сценарий только то, что просит комментарий, остальное оставь как есть. "
         "Верни сценарий целиком и в explanation одним предложением опиши, что изменено."
     )
     try:

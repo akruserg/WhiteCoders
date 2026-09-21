@@ -50,7 +50,7 @@ class Scenario(db.Model):
     legend = db.Column(JSONB, nullable=False)
     reference_card = db.Column(JSONB, nullable=False)
     reference_actions = db.Column(JSONB, nullable=False, default=list)
-    time_limit_sec = db.Column(db.Integer, nullable=False, default=30)
+    time_limit_sec = db.Column(db.Integer)  # None - берется из профиля, затем 30 с
     grading_profile_id = db.Column(
         db.UUID(as_uuid=True),
         db.ForeignKey("grading_profiles.id", ondelete="SET NULL"),

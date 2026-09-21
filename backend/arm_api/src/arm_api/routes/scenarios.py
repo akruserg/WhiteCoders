@@ -12,7 +12,7 @@ POST   /scenarios/{id}/grammar-check   - принудительная прове
 
 from datetime import datetime, timezone
 
-from flask import Blueprint, request
+from flask import Blueprint, current_app, request
 from sqlalchemy import select
 
 from ..core.errors import ApiError
@@ -36,7 +36,7 @@ from ..schemas import (
     ScenarioUpdate,
     ScenarioValidateIn,
 )
-from ..services import ai, grammar
+from ..services import ai, grammar, knowledge
 from ._helpers import body, commit, get_or_404, int_arg, ok
 
 scenarios_bp = Blueprint("scenarios", __name__)
@@ -281,6 +281,7 @@ def generate_scenarios():
         time_limit_sec=payload.time_limit_sec,
         hints=payload.hints,
         location=payload.location,
+        context_for=lambda category: knowledge.context_for(category, payload.hints),
     )
 
     created = []
@@ -457,6 +458,15 @@ def validate_scenario(scenario_id):
     return ok(_view(scenario, principal))
 
 
+def _correction_context(scenario, comment):
+    """Выдержки из материалов для коррекции; сбой базы знаний не мешает правке."""
+    try:
+        return knowledge.context_for(scenario.category, comment)
+    except Exception as exc:
+        current_app.logger.warning("база знаний недоступна: %s", exc)
+        return ""
+
+
 @scenarios_bp.post("/scenarios/<uuid:scenario_id>/corrections")
 def correct_scenario(scenario_id):
     principal = require("scenario.manage")
@@ -471,7 +481,9 @@ def correct_scenario(scenario_id):
     db.session.add(correction)
 
     if payload.apply_now:
-        patch, explanation = ai.apply_correction(scenario, payload.comment)
+        patch, explanation = ai.apply_correction(
+            scenario, payload.comment, _correction_context(scenario, payload.comment)
+        )
         if patch:  # нечего править - утвержденный сценарий не трогаем
             for key, value in patch.items():
                 setattr(scenario, key, value)

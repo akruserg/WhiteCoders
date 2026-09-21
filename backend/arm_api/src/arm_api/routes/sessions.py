@@ -61,7 +61,7 @@ from ..schemas import (
     SessionUpdate,
     SubmitIn,
 )
-from ..services import ai, card_schema, grammar, integrations, scoring
+from ..services import ai, card_schema, grammar, integrations, scoring, settings
 from ._helpers import body, commit, get_or_404, ok, uuid_arg
 
 sessions_bp = Blueprint("sessions", __name__)
@@ -339,6 +339,20 @@ def start_session(session_id):
     if not session.participants:
         raise ApiError("В занятии нет ни одного обучающегося", 409)
 
+    limit = int(settings.get("perf.max_active_sessions", 0) or 0)
+    if limit:
+        running = db.session.execute(
+            select(func.count())
+            .select_from(TrainingSession)
+            .where(TrainingSession.status == SessionStatus.RUNNING)
+        ).scalar_one()
+        if running >= limit:
+            raise ApiError(
+                f"Достигнут предел одновременных занятий ({limit})",
+                409,
+                code="capacity_reached",
+            )
+
     session.status = SessionStatus.RUNNING
     session.started_at = datetime.now(timezone.utc)
     write_audit(db.session, request, principal, "session.start", "session", session.id)
@@ -497,14 +511,8 @@ def next_card(session_id):
 
     scenario = _pick_scenario(session, principal)
     profile = _resolve_profile(session, scenario)
-    time_limit = (
-        session.time_limit_sec
-        or scenario.time_limit_sec
-        or (
-            profile.default_time_limit_sec
-            if profile
-            else current_app.config["DEFAULT_TIME_LIMIT_SEC"]
-        )
+    time_limit = resolve_time_limit(
+        session, scenario, profile, current_app.config["DEFAULT_TIME_LIMIT_SEC"]
     )
 
     attempt = Attempt(
@@ -703,6 +711,18 @@ def save_draft(attempt_id):
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+
+def resolve_time_limit(session, scenario, profile, default):
+    """Лимит времени карточки. Приоритет: занятие, сценарий, профиль оценивания,
+    затем значение по умолчанию (ТЗ: 30 с). Заданный явно лимит более
+    конкретного уровня всегда важнее общего."""
+    for source in (session, scenario):
+        if source is not None and source.time_limit_sec:
+            return source.time_limit_sec
+    if profile is not None and profile.default_time_limit_sec:
+        return profile.default_time_limit_sec
+    return default
 
 
 def process_submission(attempt, principal, answer, actions, now, req):

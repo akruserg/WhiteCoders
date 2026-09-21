@@ -231,3 +231,67 @@ def test_location_reaches_the_prompt_and_the_legend(app, monkeypatch):
         )
     assert "ТАО, Вороновское" in seen[0]
     assert drafts[0]["legend"]["location"] == "ТАО, Вороновское"
+
+
+# ---------------------------------------------------------------- лимит времени
+
+
+def test_time_limit_priority_session_scenario_profile_default():
+    from types import SimpleNamespace as NS
+
+    resolve = sessions_routes.resolve_time_limit
+    session = NS(time_limit_sec=20)
+    scenario = NS(time_limit_sec=45)
+    profile = NS(default_time_limit_sec=60)
+    assert resolve(session, scenario, profile, 30) == 20
+    assert resolve(NS(time_limit_sec=None), scenario, profile, 30) == 45
+    assert resolve(NS(time_limit_sec=None), NS(time_limit_sec=None), profile, 30) == 60
+    assert resolve(NS(time_limit_sec=None), NS(time_limit_sec=None), None, 30) == 30
+
+
+def test_time_limit_is_optional_in_schemas():
+    from arm_api import schemas
+
+    for cls in (
+        schemas.SessionCreate,
+        schemas.ScenarioGenerateIn,
+        schemas.ScenarioImportItem,
+    ):
+        assert cls._fields["time_limit_sec"].default is None
+        assert cls._fields["time_limit_sec"].nullable
+    assert schemas.GradingProfileIn._fields["default_time_limit_sec"].default == 30
+
+
+# ---------------------------------------------------------------- матрица прав ролей
+
+
+def test_default_role_permissions_satisfy_the_rules():
+    from arm_api.core import security
+
+    for role, codes in security.ROLE_PERMISSIONS.items():
+        assert security.check_role_permissions(role, codes) == [], role
+
+
+def test_role_rules_block_dangerous_changes():
+    from arm_api.core.security import ROLE_PERMISSIONS, check_role_permissions
+
+    teacher = set(ROLE_PERMISSIONS["teacher"])
+    assert check_role_permissions("teacher", teacher | {"system.manage"})
+    admin = set(ROLE_PERMISSIONS["admin"])
+    assert check_role_permissions("admin", admin | {"attempt.grade"})
+    assert check_role_permissions("admin", admin - {"user.manage"})
+    student = set(ROLE_PERMISSIONS["student"])
+    assert check_role_permissions("student", student | {"scenario.manage"})
+    assert check_role_permissions("student", student | {"no.such.right"})
+    # безопасное расширение допустимо
+    assert check_role_permissions("teacher", teacher - {"certificate.issue"}) == []
+
+
+def test_performance_settings_are_consistent():
+    from arm_api.services import card_schema, seed, settings
+
+    keys = {row[0]: row for row in card_schema.DEFAULT_SETTINGS}
+    for key in settings.PERF_ENV:
+        assert key in keys and key in seed.ENV_BACKED
+        assert keys[key][1] == "performance" and keys[key][5] is True  # нужен рестарт
+    assert keys["perf.max_active_sessions"][5] is False  # действует сразу

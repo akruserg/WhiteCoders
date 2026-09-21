@@ -69,6 +69,54 @@ ROLE_PERMISSIONS = {
 }
 
 
+# Ограничения матрицы прав из ТЗ: их нельзя снять настройкой роли
+ROLE_MUST_HAVE = {
+    "admin": {"user.manage", "system.manage"},  # иначе некому управлять системой
+    "teacher": {"session.manage", "scenario.manage"},
+    "student": {"session.participate", "attempt.submit"},
+}
+ROLE_FORBIDDEN = {
+    # администратор не меняет оценки и сценарии, не видит результаты обучающихся
+    "admin": {
+        "scenario.manage",
+        "scenario.validate",
+        "attempt.grade",
+        "report.read.any",
+        "session.manage",
+        "session.participate",
+        "attempt.submit",
+        "insight.manage",
+        "certificate.issue",
+    },
+    # преподаватель не трогает административные функции платформы
+    "teacher": {
+        "user.manage",
+        "system.manage",
+        "workstation.manage",
+        "audit.read",
+    },
+    # обучающийся не получает ни административных, ни преподавательских прав
+    "student": set(PERMISSIONS)
+    - {"session.participate", "attempt.submit", "scenario.read"},
+}
+
+
+def check_role_permissions(role_code, codes):
+    """Проверка предлагаемого набора прав роли. Возвращает список нарушений."""
+    codes = set(codes)
+    problems = []
+    unknown = sorted(codes - set(PERMISSIONS))
+    if unknown:
+        problems.append("неизвестные права: " + ", ".join(unknown))
+    missing = sorted(ROLE_MUST_HAVE.get(role_code, set()) - codes)
+    if missing:
+        problems.append("нельзя отозвать обязательные права: " + ", ".join(missing))
+    forbidden = sorted(codes & ROLE_FORBIDDEN.get(role_code, set()))
+    if forbidden:
+        problems.append("нельзя выдать роли права: " + ", ".join(forbidden))
+    return problems
+
+
 # Администратору доступны только отчеты о системе: результаты обучающихся
 # (персональные данные) он видеть без необходимости не должен
 ADMIN_REPORT_KINDS = {"system_usage", "security_audit"}

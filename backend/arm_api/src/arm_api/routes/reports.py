@@ -45,7 +45,7 @@ from ..models import (
     User,
 )
 from ..schemas import CertificateIn, InsightGenerateIn, ReportCreateIn
-from ..services import ai, analytics, reporting
+from ..services import ai, alerts, analytics, reporting, settings
 from ._helpers import body, commit, get_or_404, item, ok, uuid_arg
 
 reports_bp = Blueprint("reports", __name__)
@@ -158,6 +158,14 @@ def create_report():
             "elapsed_sec": round(elapsed, 2),
         },
     )
+    warn_after = float(settings.get("perf.report_warn_sec", 30) or 0)
+    if warn_after and elapsed > warn_after:
+        alerts.raise_alert(
+            "reports",
+            f"Отчет формировался дольше {warn_after:g} с",
+            f"report-slow-{report.kind.value}",
+            details={"elapsed_sec": round(elapsed, 2), "kind": report.kind.value},
+        )
     commit()
     return ok(
         {
