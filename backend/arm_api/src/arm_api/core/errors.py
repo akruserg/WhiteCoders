@@ -64,6 +64,15 @@ def register_error_handlers(app, db):
 
     @app.errorhandler(Exception)
     def _unhandled(exc):
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:  # соединение уже потеряно
+            pass
+        from ..services.spool import is_db_outage
+
+        if is_db_outage(exc) or is_db_outage(getattr(exc, "orig", None) or exc):
+            from .. import _outage_response
+
+            return _outage_response(exc)
         app.logger.exception("Необработанная ошибка: %s", exc)
         return error_response("Внутренняя ошибка сервиса", status=500)

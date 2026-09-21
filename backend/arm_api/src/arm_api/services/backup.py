@@ -6,17 +6,20 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import log_event
 from ..models import AuditLog, Backup
-from . import alerts, dbtools, settings
+from . import alerts, cluster, dbtools, settings
 
 logger = logging.getLogger(__name__)
 
 KIND_FULL = "full"
+SCHEDULER_TICK_SEC = (
+    900  # проверка каждые 15 минут: задание не пропадет, если узел-лидер упал
+)
 MIN_AUDIT_RETENTION_DAYS = 183  # ТЗ: журналы безопасности не менее 6 месяцев
 
 
@@ -152,13 +155,24 @@ def require_recent_backup(max_age_hours=24):
         )
 
 
+def backup_due(now, hour):
+    """Пора ли делать ежедневную копию: сегодня ее еще не было и наступил час запуска.
+    Если автоматических копий не было вовсе, делаем сразу."""
+    last = db.session.execute(
+        select(func.max(Backup.started_at)).where(
+            Backup.is_automatic.is_(True), Backup.status == "success"
+        )
+    ).scalar()
+    if last is None:
+        return True
+    return last.date() < now.date() and now.hour >= hour
+
+
 def run_daily_backup_if_due():
     if not settings.get("backup.enabled", True):
         logger.info("Планировщик бэкапов остановлен администратором")
         return None
-    since = _now() - timedelta(hours=24)
-    if has_successful_automatic_backup_since(since):
-        logger.info("Ежедневный бэкап пропущен: успешная копия уже есть за 24 часа")
+    if not backup_due(_now(), int(current_app.config["BACKUP_HOUR_UTC"])):
         return None
     return run_backup(kind=KIND_FULL, automatic=True)
 
@@ -182,13 +196,18 @@ def run_loop():
         except Exception:
             logger.exception("Стартовый бэкап завершился ошибкой")
     while True:
-        delay = _seconds_until_next_run(hour)
-        logger.info("Следующий бэкап через %.0f с", delay)
+        delay = min(_seconds_until_next_run(hour), SCHEDULER_TICK_SEC)
+        logger.info("Следующая проверка заданий через %.0f с", delay)
         time.sleep(delay)
         with app.app_context():
             try:
-                run_daily_backup_if_due()
-                purge_old_audit()
+                # на кластере задание выполняет ровно один узел (см. cluster.lock)
+                with cluster.lock("daily-jobs") as leader:
+                    if leader:
+                        run_daily_backup_if_due()
+                        purge_old_audit()
+                    else:
+                        logger.info("Ежедневное задание выполняет другой узел")
             except Exception:
                 logger.exception("Ежедневное задание завершилось ошибкой")
 

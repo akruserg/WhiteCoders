@@ -458,6 +458,26 @@ class VoipEventIn(Schema):
     latency_ok = Field("bool", nullable=True)
 
 
+class WorkstationIn(Schema):
+    number = Field("int", required=True, min=1, max=9999)
+    name = Field("str", required=True, min_len=1, max_len=128)
+    ip = Field("str", nullable=True, max_len=64)
+    location = Field("str", nullable=True, max_len=255)
+    user_id = Field("uuid", nullable=True)
+    is_active = Field("bool", default=True)
+    config = Field("dict", default=dict)
+
+
+class WorkstationUpdate(Schema):
+    number = Field("int", min=1, max=9999)
+    name = Field("str", min_len=1, max_len=128)
+    ip = Field("str", nullable=True, max_len=64)
+    location = Field("str", nullable=True, max_len=255)
+    user_id = Field("uuid", nullable=True)
+    is_active = Field("bool")
+    config = Field("dict")
+
+
 class PageQuery(Schema):
     page = Field("int", default=1, min=1)
     per_page = Field("int", default=50, min=1, max=200)

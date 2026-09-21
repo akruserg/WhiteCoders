@@ -705,33 +705,21 @@ def save_draft(attempt_id):
     )
 
 
-@sessions_bp.post("/attempts/<uuid:attempt_id>/submit")
-def submit_card(attempt_id):
-    principal = require("attempt.submit")
-    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
-    if attempt.user_id != principal.id:
-        raise ApiError("Карточка другого обучающегося", 403)
-    if attempt.status in {AttemptStatus.SUBMITTED, AttemptStatus.EVALUATED}:
-        raise ApiError("Карточка уже отправлена", 409)
-    if attempt.status is AttemptStatus.EXPIRED:
-        raise ApiError("Занятие завершено, карточка закрыта", 409)
-    if attempt.status is AttemptStatus.ISSUED:
-        raise ApiError(
-            "Сначала примите вызов: время на карточку отсчитывается с ответа",
-            409,
-            code="call_not_answered",
-        )
-
-    payload = body(SubmitIn)
-    now = datetime.now(timezone.utc)
+def process_submission(attempt, principal, answer, actions, now, req):
+    """Оценка отправленной карточки. Общая для обычного запроса и для повторной
+    обработки из буфера (services/spool.py). Коммит и hangup - на вызывающем.
+    now - момент, когда ответ принят: при повторной обработке это время
+    получения, а не время восстановления БД, поэтому норматив считается честно.
+    Возвращает id звонка для завершения в VoIP.
+    """
     started = attempt.started_at or attempt.issued_at
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
 
     attempt.submitted_at = now
     attempt.duration_ms = max(0, int((now - started).total_seconds() * 1000))
-    attempt.answer = payload.answer
-    attempt.actions = payload.actions
+    attempt.answer = answer
+    attempt.actions = actions
     attempt.status = AttemptStatus.SUBMITTED
 
     scenario = db.session.get(Scenario, attempt.scenario_id)
@@ -742,7 +730,7 @@ def submit_card(attempt_id):
     grammar_issues = []
     if profile is None or profile.grammar_check_enabled:
         grammar_issues = grammar.check_answer(
-            payload.answer,
+            answer,
             template.fields if template else [],
             rules=(profile.syntax_rules if profile else None),
             known_words=grammar.words_of(
@@ -763,8 +751,8 @@ def submit_card(attempt_id):
         reference_actions=(
             [] if session.mode is SessionMode.CARDS else scenario.reference_actions
         ),
-        answer=payload.answer,
-        actions=payload.actions,
+        answer=answer,
+        actions=actions,
         duration_ms=attempt.duration_ms,
         time_limit_sec=attempt.time_limit_sec,
         grammar_errors=grammar_issues,
@@ -814,12 +802,41 @@ def submit_card(attempt_id):
 
     write_audit(
         db.session,
-        request,
+        req,
         principal,
         "attempt.submit",
         "attempt",
         attempt.id,
         {"score": float(attempt.score), "passed": bool(attempt.passed)},
+    )
+    return hangup_id
+
+
+@sessions_bp.post("/attempts/<uuid:attempt_id>/submit")
+def submit_card(attempt_id):
+    principal = require("attempt.submit")
+    attempt = get_or_404(Attempt, attempt_id, "Карточка", lock=True)
+    if attempt.user_id != principal.id:
+        raise ApiError("Карточка другого обучающегося", 403)
+    if attempt.status in {AttemptStatus.SUBMITTED, AttemptStatus.EVALUATED}:
+        raise ApiError("Карточка уже отправлена", 409)
+    if attempt.status is AttemptStatus.EXPIRED:
+        raise ApiError("Занятие завершено, карточка закрыта", 409)
+    if attempt.status is AttemptStatus.ISSUED:
+        raise ApiError(
+            "Сначала примите вызов: время на карточку отсчитывается с ответа",
+            409,
+            code="call_not_answered",
+        )
+
+    payload = body(SubmitIn)
+    hangup_id = process_submission(
+        attempt,
+        principal,
+        payload.answer,
+        payload.actions,
+        datetime.now(timezone.utc),
+        request,
     )
     commit()
     integrations.hangup(hangup_id)  # сетевой вызов - после фиксации в БД

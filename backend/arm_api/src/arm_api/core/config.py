@@ -147,6 +147,12 @@ class Config:
         if origin.strip()
     ]
 
+    # buffer: ответы обучающихся при сбоях БД (services/spool.py)
+    SPOOL_DIR = os.environ.get("SPOOL_DIR", "/var/lib/arm112/spool")
+    SPOOL_MAX_FILES = _int("SPOOL_MAX_FILES", 5000)
+    SPOOL_REPLAY_INTERVAL_SEC = _int("SPOOL_REPLAY_INTERVAL_SEC", 5)
+    SPOOL_RETRY_AFTER_SEC = _int("SPOOL_RETRY_AFTER_SEC", 5)
+
     # logging: json (по ТЗ) или text для отладки
     LOG_FORMAT = os.environ.get("LOG_FORMAT", "json").strip().lower()
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()

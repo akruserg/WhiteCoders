@@ -26,6 +26,7 @@ from .report import Report, ReportKind, ReportStatus
 from .insight import Insight, InsightKind
 from .certificate import Certificate
 from .system_setting import SettingScope, SystemSetting
+from .workstation import Workstation
 from .alert import Alert, AlertSeverity, AlertStatus
 from .audit_log import AuditLog
 from .system_event import SystemEvent
@@ -70,6 +71,7 @@ __all__ = [
     "InsightKind",
     "Certificate",
     "SystemSetting",
+    "Workstation",
     "SettingScope",
     "Alert",
     "AlertSeverity",

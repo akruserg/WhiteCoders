@@ -9,6 +9,7 @@ from .scenarios import scenarios_bp
 from .sessions import sessions_bp
 from .system import system_bp
 from .users import users_bp
+from .workstations import workstations_bp
 
 API_BLUEPRINTS = (
     auth_bp,
@@ -21,6 +22,7 @@ API_BLUEPRINTS = (
     reports_bp,
     system_bp,
     internal_bp,
+    workstations_bp,
 )
 
 
