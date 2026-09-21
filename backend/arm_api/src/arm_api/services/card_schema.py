@@ -14,17 +14,21 @@ TEMPLATE_FIELDS = [
     {"key": "phone_provided", "label": "Предоставленный номер", "type": "phone", "required": False, "weight": 1},
     {"key": "phone_place", "label": "Телефон на место", "type": "phone", "required": False, "weight": 1},
     {"key": "applicant_name", "label": "Фамилия и имя заявителя", "type": "text", "required": False, "weight": 1},
-    {"key": "incident_type", "label": "Тип происшествия", "type": "text", "required": True, "weight": 3},
+    {"key": "incident_type", "label": "Тип происшествия", "type": "select", "required": True, "weight": 3},
     {"key": "incident_details", "label": "Подробности происшествия", "type": "textarea", "required": True, "weight": 2},
-    {"key": "address_street", "label": "Улица", "type": "text", "required": True, "weight": 2},
-    {"key": "address_house", "label": "Дом", "type": "text", "required": True, "weight": 2},
-    {"key": "address_flat", "label": "Квартира/офис", "type": "text", "required": False, "weight": 1},
-    {"key": "address_entrance", "label": "Подъезд", "type": "text", "required": False, "weight": 1},
-    {"key": "address_floor", "label": "Этаж", "type": "text", "required": False, "weight": 1},
+    {"key": "address_street", "label": "Улица", "type": "text", "required": True, "weight": 2, "syntax_rules": {"capital_first": False}},
+    {"key": "address_house", "label": "Дом", "type": "text", "required": True, "weight": 2, "syntax_rules": {"capital_first": False}},
+    {"key": "address_flat", "label": "Квартира/офис", "type": "text", "required": False, "weight": 1, "syntax_rules": {"capital_first": False}},
+    {"key": "address_entrance", "label": "Подъезд", "type": "text", "required": False, "weight": 1, "syntax_rules": {"capital_first": False}},
+    {"key": "address_floor", "label": "Этаж", "type": "text", "required": False, "weight": 1, "syntax_rules": {"capital_first": False}},
     {"key": "victims", "label": "Пострадавшие", "type": "text", "required": True, "weight": 2},
     {"key": "services", "label": "Службы на вызов", "type": "multiselect", "required": True, "weight": 2},
     {"key": "description", "label": "Описание со слов заявителя", "type": "textarea", "required": True, "weight": 2},
 ]  # fmt: skip
+
+# Значения из классификатора и адреса пишутся со строчной буквы («пожар: квартира»,
+# «улица Мира»), поэтому тип происшествия - выбор из списка, а у адресных полей
+# отключена проверка заглавной буквы: иначе точный эталон получал бы штраф.
 
 # Типы действий с карточкой. Порядок в эталоне важен: он проверяется.
 ACTION_TYPES = [

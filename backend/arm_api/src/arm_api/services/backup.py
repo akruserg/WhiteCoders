@@ -14,7 +14,7 @@ from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import log_event
 from ..models import AuditLog, Backup
-from . import settings
+from . import alerts, settings
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,14 @@ def run_backup(kind="full", automatic=True, created_by=None):
     backup.finished_at = _now()
     if backup.status == "success":
         _prune_old_backups()
+    else:
+        alerts.raise_alert(
+            "backup",
+            "Не удалась резервная копия БД",
+            fingerprint="backup.failed",
+            severity="critical",
+            details={"backup_id": str(backup.id), "error": backup.error},
+        )
 
     log_event(
         "backup",

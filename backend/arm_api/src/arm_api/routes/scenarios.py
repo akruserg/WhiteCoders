@@ -16,6 +16,7 @@ from flask import Blueprint, request
 from sqlalchemy import select
 
 from ..core.errors import ApiError
+from ..schemas import ValidationError
 from ..core.extensions import db
 from ..core.pagination import paginate
 from ..core.security import is_admin, is_student, require, write_audit
@@ -29,6 +30,7 @@ from ..models import (
 )
 from ..schemas import (
     ScenarioCorrectionIn,
+    ScenarioImportItem,
     ScenarioGenerateIn,
     ScenarioIn,
     ScenarioUpdate,
@@ -146,6 +148,108 @@ def create_scenario():
     return ok(_view(scenario, principal), 201)
 
 
+MAX_IMPORT_SCENARIOS = 200
+
+
+@scenarios_bp.get("/scenarios/export")
+def export_scenarios():
+    """Сценарии преподавателя одним JSON-файлом (перенос между стендами, резерв)."""
+    principal = require("scenario.manage")
+    rows = db.session.execute(
+        select(Scenario)
+        .where(
+            Scenario.status != ScenarioStatus.ARCHIVED,
+            (Scenario.author_id == principal.id) | Scenario.author_id.is_(None),
+        )
+        .order_by(Scenario.created_at)
+    ).scalars()
+    codes = {
+        c.id: c.code for c in db.session.execute(select(IncidentCategory)).scalars()
+    }
+    return ok(
+        {
+            "version": 1,
+            "scenarios": [
+                {
+                    "title": s.title,
+                    "category_code": codes.get(s.category_id),
+                    "difficulty": s.difficulty,
+                    "legend": s.legend,
+                    "reference_card": s.reference_card,
+                    "reference_actions": s.reference_actions,
+                    "time_limit_sec": s.time_limit_sec,
+                }
+                for s in rows
+            ],
+        }
+    )
+
+
+@scenarios_bp.post("/scenarios/import")
+def import_scenarios():
+    """Пакетная загрузка сценариев (билеты и задачи, обновление вручную). Формат как
+    у /scenarios/export. Принимается целиком или не принимается вовсе, сценарии
+    попадают на утверждение преподавателем."""
+    principal = require("scenario.manage")
+    data = request.get_json(silent=True)
+    items = (data or {}).get("scenarios") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        raise ApiError('Ожидается {"scenarios": [...]}', 422)
+    if len(items) > MAX_IMPORT_SCENARIOS:
+        raise ApiError(f"За один раз не более {MAX_IMPORT_SCENARIOS} сценариев", 422)
+
+    template = _active_template()
+    by_code = {
+        c.code: c.id for c in db.session.execute(select(IncidentCategory)).scalars()
+    }
+    known_ids = set(by_code.values())
+    parsed, errors = [], {}
+    for index, raw in enumerate(items):
+        try:
+            item = ScenarioImportItem.load(raw)
+        except ValidationError as exc:
+            errors[str(index)] = exc.errors
+            continue
+        category_id = by_code.get(item.category_code) or (
+            item.category_id if item.category_id in known_ids else None
+        )
+        if category_id is None:
+            errors[str(index)] = {
+                "category": "не найдена категория (category_code или category_id)"
+            }
+        elif not (item.legend.get("dialog") or []):
+            errors[str(index)] = {
+                "legend": "нужна хотя бы одна реплика в legend.dialog"
+            }
+        else:
+            parsed.append((item, category_id))
+    if errors:
+        raise ApiError("Импорт не выполнен", 422, details=errors)
+
+    for item, category_id in parsed:
+        db.session.add(
+            Scenario(
+                title=item.title,
+                category_id=category_id,
+                template_id=template.id,
+                difficulty=item.difficulty,
+                origin=ScenarioOrigin.IMPORTED,
+                status=ScenarioStatus.PENDING_REVIEW,
+                legend=item.legend,
+                reference_card=item.reference_card,
+                reference_actions=item.reference_actions,
+                time_limit_sec=item.time_limit_sec,
+                author_id=principal.id,
+            )
+        )
+    write_audit(
+        db.session, request, principal, "scenario.import", "scenario", None,
+        {"count": len(parsed)},
+    )  # fmt: skip
+    commit()
+    return ok({"imported": len(parsed), "status": "pending_review"}, 201)
+
+
 @scenarios_bp.post("/scenarios/generate")
 def generate_scenarios():
     principal = require("scenario.manage")
@@ -176,6 +280,7 @@ def generate_scenarios():
         template_fields=template.fields,
         time_limit_sec=payload.time_limit_sec,
         hints=payload.hints,
+        location=payload.location,
     )
 
     created = []

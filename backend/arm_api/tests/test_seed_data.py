@@ -56,3 +56,17 @@ def test_default_settings_are_all_known_scopes():
 
     scopes = {s.value for s in SettingScope}
     assert all(scope in scopes for _, scope, *_ in card_schema.DEFAULT_SETTINGS)
+
+
+def test_exact_reference_answer_gets_no_grammar_penalty():
+    """Регрессия: «пожар: квартира» и «улица Мира» со строчной буквы - это верный эталон."""
+    from arm_api.services import grammar
+
+    for item in seed.DEMO:
+        known = grammar.words_of(
+            item["title"], *item["card"].values(), *item["legend"]["dialog"]
+        )
+        issues = grammar.check_answer(
+            item["card"], card_schema.TEMPLATE_FIELDS, known_words=known
+        )
+        assert issues == [], (item["title"], [i["message"] for i in issues])

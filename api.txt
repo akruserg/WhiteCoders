@@ -2,7 +2,7 @@ API-контракт АРМ-112 (учебное ПО подготовки опе
 Базовый префикс: /api/v1. Формат: JSON, ошибки: {"error": {"code", "message", "details"}, "request_id"}.
 Авторизация: заголовок Authorization: Bearer <access_token>, получение: POST /auth/login.
 Полная спецификация OpenAPI 3.1: GET /api/v1/openapi.json
-Всего маршрутов: 107
+Всего маршрутов: 109
 
 == Аутентификация ==
 POST    /api/v1/auth/consent   [Bearer JWT]
@@ -46,7 +46,9 @@ PATCH   /api/v1/grading-profiles/{profile_id}  [Bearer JWT]
 == Учебные сценарии ==
 GET     /api/v1/scenarios                              [Bearer JWT]
 POST    /api/v1/scenarios                              [Bearer JWT]
+GET     /api/v1/scenarios/export                       [Bearer JWT]
 POST    /api/v1/scenarios/generate                     [Bearer JWT]
+POST    /api/v1/scenarios/import                       [Bearer JWT]
 DELETE  /api/v1/scenarios/{scenario_id}                [Bearer JWT]
 GET     /api/v1/scenarios/{scenario_id}                [Bearer JWT]
 PATCH   /api/v1/scenarios/{scenario_id}                [Bearer JWT]

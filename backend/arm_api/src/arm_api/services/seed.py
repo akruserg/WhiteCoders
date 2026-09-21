@@ -106,6 +106,11 @@ def seed_template():
         .first()
     )
     if have is not None:
+        # версия 1 принадлежит системе: приводим ее к актуальному описанию полей
+        # (правки преподавателя делаются новыми версиями и сюда не попадают)
+        if have.version == 1 and have.fields != card_schema.TEMPLATE_FIELDS:
+            have.fields = card_schema.TEMPLATE_FIELDS
+            db.session.commit()
         return have
     template = CardTemplate(
         code=card_schema.TEMPLATE_CODE,

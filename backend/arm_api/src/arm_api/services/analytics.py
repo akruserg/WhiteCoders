@@ -1,3 +1,5 @@
+import math
+
 from sqlalchemy import Float, and_, cast, func, select
 
 from ..core.extensions import db
@@ -71,6 +73,38 @@ def error_breakdown(where, limit_fields=10):
     }
 
 
+def forecast_scores(scores, pass_score=70.0):
+    """Прогноз следующего результата по линейному тренду средних баллов занятий.
+
+    Сравнить прогноз с фактом можно на следующем занятии: поле next_score против
+    фактического среднего балла.
+    """
+    n = len(scores)
+    if n < 3:
+        return {"available": False, "reason": "нужно не менее 3 занятий", "points": n}
+    mean_x, mean_y = (n - 1) / 2, sum(scores) / n
+    sxx = sum((x - mean_x) ** 2 for x in range(n))
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in enumerate(scores)) / sxx
+    intercept = mean_y - slope * mean_x
+    predicted = [intercept + slope * x for x in range(n)]
+    ss_tot = sum((y - mean_y) ** 2 for y in scores)
+    ss_res = sum((y - p) ** 2 for y, p in zip(scores, predicted))
+    trend = "up" if slope > 0.5 else "down" if slope < -0.5 else "flat"
+    sessions_to_pass = None
+    if slope > 0 and scores[-1] < pass_score:
+        sessions_to_pass = max(1, math.ceil((pass_score - scores[-1]) / slope))
+    return {
+        "available": True,
+        "points": n,
+        "next_score": round(max(0.0, min(100.0, intercept + slope * n)), 1),
+        "trend": trend,
+        "trend_per_session": round(slope, 2),
+        "r2": round(1 - ss_res / ss_tot, 2) if ss_tot else 1.0,
+        "pass_score": pass_score,
+        "sessions_to_pass": sessions_to_pass,
+    }
+
+
 def user_progress(user_id, session_id=None):
     where = [Attempt.user_id == user_id, Attempt.status.in_(_EVALUATED)]
     if session_id:
@@ -122,6 +156,7 @@ def user_progress(user_id, session_id=None):
             }
             for sid, title, started, count, avg in timeline
         ],
+        "forecast": forecast_scores([_round(avg) or 0.0 for *_, avg in timeline][-10:]),
         "by_category": [
             {
                 "code": code,

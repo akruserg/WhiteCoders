@@ -152,3 +152,82 @@ def test_migration_chain_is_linear():
             revisions[module.revision] = module.down_revision
     heads = set(revisions) - set(revisions.values())
     assert len(heads) == 1 and list(revisions.values()).count(None) == 1
+
+
+# ---------------------------------------------------------------- прогноз успеваемости
+
+
+def test_forecast_needs_three_sessions():
+    from arm_api.services import analytics
+
+    result = analytics.forecast_scores([70, 75])
+    assert result["available"] is False and result["points"] == 2
+
+
+def test_forecast_follows_linear_trend():
+    from arm_api.services import analytics
+
+    up = analytics.forecast_scores([50, 55, 60, 65])
+    assert up["available"] and up["trend"] == "up" and up["next_score"] == 70.0
+    assert up["trend_per_session"] == 5.0 and up["r2"] == 1.0
+    assert (
+        up["sessions_to_pass"] == 1
+    )  # последний балл 65, до порога 70 при +5 за занятие
+    down = analytics.forecast_scores([90, 80, 70])
+    assert (
+        down["trend"] == "down"
+        and down["next_score"] == 60.0
+        and down["sessions_to_pass"] is None
+    )
+    flat = analytics.forecast_scores([80, 80, 80])
+    assert flat["trend"] == "flat" and flat["next_score"] == 80.0
+
+
+def test_forecast_is_clamped_to_score_range():
+    from arm_api.services import analytics
+
+    assert analytics.forecast_scores([80, 90, 100])["next_score"] == 100.0
+    assert analytics.forecast_scores([20, 10, 0])["next_score"] == 0.0
+
+
+# ---------------------------------------------------------------- локация сценария
+
+
+def test_location_reaches_the_prompt_and_the_legend(app, monkeypatch):
+    import json as _json
+    import httpx
+
+    from arm_api.services import ai
+
+    seen = []
+
+    def handler(request):
+        seen.append(_json.loads(request.content)["messages"][1]["content"])
+        scenario = {
+            "title": "t",
+            "legend": {
+                "summary": "s",
+                "dialog": ["Горит"],
+                "followups": [],
+                "hints": [],
+            },
+            "reference_card": {"address_street": "Мира"},
+            "reference_actions": [],
+        }
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": _json.dumps(scenario)}}]}
+        )
+
+    app.config.update(AI_ENABLED=True)
+    ai.settings.get = lambda key, default=None: default
+    ai._client = lambda timeout=None: httpx.Client(
+        base_url="http://x", transport=httpx.MockTransport(handler)
+    )
+    cat = SimpleNamespace(id=1, name="пожар", code="G01")
+    fields = [{"key": "address_street", "label": "Улица"}]
+    with app.app_context():
+        drafts = ai.generate_scenarios(
+            [cat], count=1, template_fields=fields, location="ТАО, Вороновское"
+        )
+    assert "ТАО, Вороновское" in seen[0]
+    assert drafts[0]["legend"]["location"] == "ТАО, Вороновское"

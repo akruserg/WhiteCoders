@@ -326,6 +326,20 @@ class ScenarioGenerateIn(Schema):
     template_id = Field("uuid", nullable=True)
     time_limit_sec = Field("int", default=30, min=5, max=3600)
     hints = Field("str", default="", max_len=2000)
+    location = Field(
+        "str", default="", max_len=200
+    )  # район или объект, где происходит событие
+
+
+class ScenarioImportItem(Schema):
+    title = Field("str", required=True, min_len=1, max_len=255)
+    category_code = Field("str", nullable=True, max_len=32)
+    category_id = Field("int", nullable=True)
+    difficulty = Field("int", default=1, min=1, max=5)
+    legend = Field("dict", required=True)
+    reference_card = Field("dict", required=True)
+    reference_actions = Field("list", default=list)
+    time_limit_sec = Field("int", default=30, min=5, max=3600)
 
 
 class ScenarioValidateIn(Schema):

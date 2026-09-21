@@ -182,9 +182,11 @@ def _scenario_schema(field_keys):
     }
 
 
-def _scenario_prompt(category, difficulty, fields, hints):
+def _scenario_prompt(category, difficulty, fields, hints, location=""):
     listing = "\n".join(f"- {f['key']}: {f['label']}" for f in fields)
     extra = f"\nПожелания преподавателя: {hints}" if hints else ""
+    if location:
+        extra += f"\nМесто происшествия (используй в адресе): {location}"
     return (
         f"Составь один учебный сценарий вызова по теме «{category.name}» "
         f"(код {category.code}). Сложность {difficulty} из 5: {_DIFFICULTY[difficulty]}.\n\n"
@@ -214,7 +216,7 @@ def _clean_lines(values, limit=6):
     return [line for line in lines if line][:limit]
 
 
-def _draft(raw, category, difficulty, fields, time_limit_sec):
+def _draft(raw, category, difficulty, fields, time_limit_sec, location=""):
     keys = [f["key"] for f in fields]
     legend = raw.get("legend") or {}
     dialog = _clean_lines(legend.get("dialog"))
@@ -233,6 +235,7 @@ def _draft(raw, category, difficulty, fields, time_limit_sec):
             "dialog": dialog,
             "followups": _clean_lines(legend.get("followups")),
             "hints": _clean_lines(legend.get("hints"), 4),
+            **({"location": location} if location else {}),
         },
         "reference_card": card,
         "reference_actions": actions or list(card_schema.DEFAULT_ACTIONS),
@@ -242,7 +245,13 @@ def _draft(raw, category, difficulty, fields, time_limit_sec):
 
 
 def generate_scenarios(
-    categories, count=5, difficulty=2, template_fields=None, time_limit_sec=30, hints=""
+    categories,
+    count=5,
+    difficulty=2,
+    template_fields=None,
+    time_limit_sec=30,
+    hints="",
+    location="",
 ):
     """Черновики сценариев. По одному запросу на сценарий: надежнее на CPU."""
     fields = [
@@ -259,7 +268,7 @@ def generate_scenarios(
         try:
             raw = _chat(
                 SYSTEM_METHODIST,
-                _scenario_prompt(category, difficulty, fields, hints),
+                _scenario_prompt(category, difficulty, fields, hints, location),
                 schema,
             )
         except AiUnavailable as exc:
@@ -267,7 +276,7 @@ def generate_scenarios(
             if not drafts and index == 0:
                 raise  # модель недоступна целиком: дальше пробовать нет смысла
             continue
-        draft = _draft(raw, category, difficulty, fields, time_limit_sec)
+        draft = _draft(raw, category, difficulty, fields, time_limit_sec, location)
         if draft:
             drafts.append(draft)
     if not drafts:

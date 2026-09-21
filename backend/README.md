@@ -24,8 +24,15 @@ REST API, VoIP-эмуляция звонков и локальный ИИ-мод
 
 ## Требования
 
-Docker 24+ и Docker Compose v2. Процессор 4+ ядра, ОЗУ 16 ГБ (для ИИ-модуля нужны
-свободные 8 ГБ), диск 20 ГБ. ОС: Ubuntu 20.04+ или Windows 10/11 с Docker Desktop.
+Docker 24+ и Docker Compose v2. ОС: Ubuntu 20.04+ или Windows 10/11 с Docker Desktop.
+
+**Сервер (по ТЗ, для работы ИИ-модуля):** процессор Intel Core i7 / Xeon или
+аналог от 6 ядер, ОЗУ от 32 ГБ, накопитель NVMe SSD от 512 ГБ, сеть Gigabit Ethernet.
+Без ИИ-модуля хватает 4 ядер и 8 ГБ ОЗУ.
+
+**Рабочее место обучающегося (АРМ):** Intel Core i5 или аналог, ОЗУ от 16 ГБ, SSD от
+256 ГБ, Gigabit Ethernet, гарнитура с поддержкой VoIP (или программный софтфон).
+Браузеры: актуальные Chrome, Firefox, Яндекс.Браузер.
 
 ## Установка
 
@@ -154,7 +161,7 @@ docker compose up -d arm_api
 ## Разработка и тесты
 
 ```bash
-cd arm_api && pip install -e . pytest && pytest              # 64 теста
+cd arm_api && pip install -e . pytest && pytest              # 69 тестов
 cd ../arm_voip && pip install -e . pytest pytest-asyncio && pytest   # 41 тест
 black --check arm_api arm_voip && flake8 arm_api arm_voip
 ```
