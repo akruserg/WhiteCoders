@@ -1,7 +1,11 @@
+import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
-from arm_api.services import integrations
+from arm_api.services import ai, integrations
 
 
 @pytest.fixture
@@ -74,15 +78,95 @@ def test_hangup_survives_voip_errors(ctx, monkeypatch):
     assert integrations.hangup("chan1")["status"] == "finished"
 
 
-def test_caller_reply_starts_with_first_followup():
+def test_caller_reply_starts_with_first_followup(ctx):
+    # ИИ выключен (AI_ENABLED по умолчанию 0) - используются заготовки сценария
     legend = {"dialog": ["Пожар!"], "followups": ["Пятый этаж", "Есть ребенок"]}
     assert integrations.caller_reply(legend, "Адрес?", 0) == "Пятый этаж"
     assert integrations.caller_reply(legend, "Кто в квартире?", 1) == "Есть ребенок"
 
 
+def completion(payload):
+    return {
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
+    }
+
+
+def test_caller_reply_uses_ai_when_enabled(app, ctx, monkeypatch):
+    app.config.update(AI_ENABLED=True)
+    monkeypatch.setattr(ai.settings, "get", lambda key, default=None: default)
+    monkeypatch.setattr(
+        ai,
+        "_client",
+        lambda timeout=None: httpx.Client(
+            base_url="http://llm.test",
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json=completion({"reply": "Пятый этаж"}))
+            ),
+        ),
+    )
+    try:
+        legend = {"dialog": ["Пожар!"], "followups": ["Заготовка, не должна дойти"]}
+        assert integrations.caller_reply(legend, "На каком этаже?", 0) == "Пятый этаж"
+    finally:
+        app.config.update(AI_ENABLED=False)
+
+
+def test_caller_reply_falls_back_when_ai_unavailable(app, ctx, monkeypatch):
+    app.config.update(AI_ENABLED=True)
+    monkeypatch.setattr(ai.settings, "get", lambda key, default=None: default)
+    monkeypatch.setattr(
+        ai,
+        "_client",
+        lambda timeout=None: httpx.Client(
+            base_url="http://llm.test",
+            transport=httpx.MockTransport(lambda r: httpx.Response(500)),
+        ),
+    )
+    try:
+        legend = {"dialog": ["Пожар!"], "followups": ["Пятый этаж"]}
+        assert integrations.caller_reply(legend, "На каком этаже?", 0) == "Пятый этаж"
+    finally:
+        app.config.update(AI_ENABLED=False)
+
+
+def _message(author, text, when):
+    return SimpleNamespace(author=author, text=text, created_at=when)
+
+
+def test_record_dialog_turn_appends_operator_and_caller_messages(ctx, monkeypatch):
+    from arm_api.core.extensions import db as _db
+
+    now = datetime.now(timezone.utc)
+    call = SimpleNamespace(
+        id="call-1",
+        messages=[_message("caller", "Але, помогите!", now - timedelta(seconds=5))],
+    )
+    scenario = SimpleNamespace(
+        legend={"dialog": ["Але, помогите!"], "followups": ["Пятый этаж"]}
+    )
+
+    added = []
+    monkeypatch.setattr(_db.session, "add", added.append)
+    reply = integrations.record_dialog_turn(call, scenario, "Какой этаж?")
+
+    assert added[0].author == "operator" and added[0].text == "Какой этаж?"
+    assert reply.author == "caller" and reply.text == "Пятый этаж"
+    assert added[1] is reply
+
+
 def test_internal_endpoint_rejects_bad_or_missing_token(client):
     url = "/api/v1/internal/voip/events"
     payload = {"event": "answered", "call_id": "c1"}
+    assert client.post(url, json=payload).status_code == 401
+    assert (
+        client.post(url, json=payload, headers={"X-Service-Token": "nope"}).status_code
+        == 401
+    )
+
+
+def test_internal_voice_turn_rejects_bad_or_missing_token(client):
+    url = "/api/v1/internal/calls/chan1/voice-turn"
+    payload = {"text": "Пожар в квартире"}
     assert client.post(url, json=payload).status_code == 401
     assert (
         client.post(url, json=payload, headers={"X-Service-Token": "nope"}).status_code

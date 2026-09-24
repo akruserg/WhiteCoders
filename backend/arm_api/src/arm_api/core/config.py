@@ -141,6 +141,9 @@ class Config:
     ).strip()
     AI_TIMEOUT_SEC = float(os.environ.get("AI_TIMEOUT_SEC", "240"))
     AI_JUDGE_TIMEOUT_SEC = float(os.environ.get("AI_JUDGE_TIMEOUT_SEC", "20"))
+    # реплика заявителя в живом диалоге (голос и текст): короткий таймаут,
+    # чтобы звонок не "зависал" в ожидании модели
+    AI_DIALOG_TIMEOUT_SEC = float(os.environ.get("AI_DIALOG_TIMEOUT_SEC", "15"))
     AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 1500)
     AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.5"))
     AI_MAX_SCENARIOS_PER_REQUEST = _int("AI_MAX_SCENARIOS_PER_REQUEST", 5)

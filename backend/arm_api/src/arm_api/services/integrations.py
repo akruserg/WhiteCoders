@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from ..core.config import Config
 from ..core.extensions import db
-from ..models import SystemSetting
+from ..models import CallMessage, SystemSetting
+from . import ai
 
 VOIP_SETTING_KEY = "voip.enabled"
 
@@ -148,11 +149,8 @@ def voip_health():
         return {"available": False, "error": str(exc)}
 
 
-def caller_reply(scenario_legend, operator_text, turn=0):
-    """Реплика «заявителя» на слова оператора.
-
-    turn - сколько реплик оператора уже было (0 - первая).
-    """
+def _scripted_reply(scenario_legend, turn):
+    """Заготовки из сценария - запасной путь, если ИИ выключен или недоступен."""
     dialog = list((scenario_legend or {}).get("dialog") or [])
     followups = list((scenario_legend or {}).get("followups") or [])
 
@@ -169,3 +167,38 @@ def caller_reply(scenario_legend, operator_text, turn=0):
             "Повторю: " + dialog[-1],
         ]
     )
+
+
+def caller_reply(scenario_legend, operator_text, turn=0, history=None):
+    """Реплика «заявителя» на слова оператора: живая генерация нейросетью
+    (учитывает легенду и историю разговора), а если ИИ выключен или не
+    ответил - заготовки из сценария (turn - сколько реплик оператора уже
+    было, 0 - первая).
+    """
+    if ai.is_enabled():
+        try:
+            return ai.caller_turn(scenario_legend, history or [], operator_text, turn)
+        except ai.AiUnavailable as exc:
+            current_app.logger.info(
+                "Живая реплика заявителя недоступна, использую заготовку: %s", exc
+            )
+    return _scripted_reply(scenario_legend, turn)
+
+
+def record_dialog_turn(call, scenario, operator_text):
+    """Добавляет в стенограмму звонка реплику оператора и ответ заявителя.
+    Общая точка входа для текстового чата (routes/sessions.py) и голосового
+    диалога (routes/internal.py, реплика уже распознана STT в arm_voip)."""
+    history = [
+        {"author": m.author, "text": m.text}
+        for m in sorted(call.messages, key=lambda m: m.created_at)
+    ]
+    turn = sum(1 for m in history if m["author"] == "operator")
+
+    db.session.add(CallMessage(call_id=call.id, author="operator", text=operator_text))
+    reply_text = caller_reply(
+        scenario.legend if scenario else {}, operator_text, turn, history
+    )
+    reply = CallMessage(call_id=call.id, author="caller", text=reply_text)
+    db.session.add(reply)
+    return reply

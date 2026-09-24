@@ -1,8 +1,10 @@
 """
-POST /internal/voip/events - события звонков от сервиса arm_voip
-                             (ответ, завершение, неответ, задержка голоса)
+POST /internal/voip/events            - события звонков от arm_voip
+                                        (ответ, завершение, неответ, задержка)
+POST /internal/calls/<id>/voice-turn  - реплика оператора (распознана STT в
+                                        arm_voip) -> ответ заявителя (ИИ)
 
-Служебный маршрут: без JWT, доступ по общему токену X-Service-Token.
+Служебные маршруты: без JWT, доступ по общему токену X-Service-Token.
 """
 
 import hmac
@@ -14,9 +16,9 @@ from sqlalchemy import select
 from ..core.errors import ApiError
 from ..core.extensions import db
 from ..core.security import log_event
-from ..models import Call, CallStatus
-from ..schemas import VoipEventIn
-from ..services import alerts, settings
+from ..models import Call, CallStatus, Scenario
+from ..schemas import VoipEventIn, VoiceTurnIn
+from ..services import alerts, integrations, settings
 from ._helpers import body, commit, ok
 
 internal_bp = Blueprint("internal", __name__)
@@ -110,3 +112,26 @@ def voip_event():
 
     commit()
     return ok({"status": "ok", "call_status": call.status.value})
+
+
+@internal_bp.post("/internal/calls/<sip_call_id>/voice-turn")
+def voice_turn(sip_call_id):
+    """Живой голосовой диалог: arm_voip прислал распознанную реплику
+    оператора, здесь она попадает в общую стенограмму звонка и получает
+    ответ заявителя (см. services.integrations.record_dialog_turn) -
+    ту же логику использует и текстовый чат (routes/sessions.py)."""
+    _require_service_token()
+    payload = body(VoiceTurnIn)
+
+    call = (
+        db.session.execute(select(Call).where(Call.sip_call_id == sip_call_id))
+        .scalars()
+        .first()
+    )
+    if call is None:
+        raise ApiError("Звонок не найден", 404, code="call_not_found")
+
+    scenario = db.session.get(Scenario, call.attempt.scenario_id)
+    reply = integrations.record_dialog_turn(call, scenario, payload.text)
+    commit()
+    return ok({"reply": reply.text})

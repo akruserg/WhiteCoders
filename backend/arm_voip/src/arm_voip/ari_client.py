@@ -105,6 +105,38 @@ class AriClient:
         self._check(response, "воспроизведение")
         return response.json().get("id", "")
 
+    def record(
+        self,
+        channel_id: str,
+        name: str,
+        *,
+        max_duration_sec: int,
+        max_silence_sec: int,
+        fmt: str = "wav",
+        beep: bool = True,
+    ) -> str:
+        """Пишет реплику оператора с канала. Останавливается сама по паузе
+        (maxSilenceSeconds) или по превышению длительности; событие
+        RecordingFinished приходит по WebSocket ARI."""
+        params = {
+            "name": name,
+            "format": fmt,
+            "maxDurationSeconds": max_duration_sec,
+            "maxSilenceSeconds": max_silence_sec,
+            "beep": "true" if beep else "false",
+            "ifExists": "overwrite",
+        }
+        response = self._request(
+            "POST", f"/channels/{channel_id}/record", params=params
+        )
+        self._check(response, "запись реплики")
+        return response.json().get("name", name)
+
+    def cancel_recording(self, name: str) -> None:
+        """Обрывает незавершенную запись (например, при досрочном hangup)."""
+        response = self._request("DELETE", f"/recordings/live/{name}")
+        self._check(response, "отмену записи", ok=(200, 204, 404))
+
     def channel_exists(self, channel_id: str) -> bool:
         response = self._request("GET", f"/channels/{channel_id}")
         if response.status_code == 404:

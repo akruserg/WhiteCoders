@@ -483,6 +483,51 @@ _JUDGE_SCHEMA = {
 }
 
 
+_CALLER_SCHEMA = {
+    "type": "object",
+    "properties": {"reply": _STR},
+    "required": ["reply"],
+}
+
+SYSTEM_CALLER = (
+    "Ты играешь роль заявителя в учебном звонке в службу 112 города Москвы. "
+    "Отвечай оператору коротко (1-2 фразы), от первого лица, в тон легенде "
+    "происшествия: испуг, растерянность или спокойствие - как задано в "
+    "легенде и предыдущих репликах. Не выдумывай фактов сверх легенды, "
+    "не веди себя как ассистент, не упоминай, что ты ИИ."
+)
+
+
+def _dialog_prompt(legend, history, operator_text):
+    summary = (legend or {}).get("summary") or ""
+    dialog = (legend or {}).get("dialog") or []
+    lines = "\n".join(f"{m.get('author')}: {m.get('text')}" for m in history)
+    return (
+        f"Легенда происшествия: {summary}\n"
+        f"Первые реплики заявителя по легенде: {'; '.join(dialog)}\n"
+        + (f"Уже сказано в разговоре:\n{lines}\n" if lines else "")
+        + f'Оператор говорит: "{operator_text}"\n'
+        "Ответь одной репликой заявителя."
+    )
+
+
+def caller_turn(legend, history, operator_text, turn=0):
+    """Живая реплика «заявителя» на слова оператора (голосовой и текстовый
+    диалог). AiUnavailable - вызывающая сторона откатывается на сценарные
+    заготовки (integrations.caller_reply)."""
+    raw = _chat(
+        SYSTEM_CALLER,
+        _dialog_prompt(legend, history, operator_text),
+        _CALLER_SCHEMA,
+        max_tokens=150,
+        timeout=current_app.config["AI_DIALOG_TIMEOUT_SEC"],
+    )
+    reply = _clean_text(raw.get("reply"), 400)
+    if not reply:
+        raise AiUnavailable("Модель вернула пустую реплику")
+    return reply
+
+
 def semantic_equal(label, expected, actual):
     """True/False - модель сравнила ответ с эталоном по смыслу, None - не смогла."""
     if not scoring_enabled():

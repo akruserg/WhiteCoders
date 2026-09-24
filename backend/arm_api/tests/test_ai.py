@@ -244,6 +244,29 @@ def test_semantic_judge_true_false_and_failure(llm):
     assert llm.requests[0]["temperature"] == 0  # проверка детерминирована
 
 
+def test_caller_turn_returns_model_reply(llm):
+    llm.reply = lambda request: httpx.Response(
+        200, json=completion({"reply": "Пятый этаж, подъезд слева"})
+    )
+    legend = {"summary": "Пожар в квартире", "dialog": ["Помогите, пожар!"]}
+    history = [{"author": "operator", "text": "Адрес?"}]
+    reply = ai.caller_turn(legend, history, "На каком этаже?", turn=1)
+    assert reply == "Пятый этаж, подъезд слева"
+    assert llm.requests[0]["messages"][1]["role"] == "user"
+
+
+def test_caller_turn_raises_when_reply_is_empty(llm):
+    llm.reply = lambda request: httpx.Response(200, json=completion({"reply": "  "}))
+    with pytest.raises(ai.AiUnavailable):
+        ai.caller_turn({}, [], "Алло?")
+
+
+def test_caller_turn_raises_when_model_disabled(app):
+    with app.app_context():
+        with pytest.raises(ai.AiUnavailable):
+            ai.caller_turn({}, [], "Алло?")
+
+
 def test_judge_turns_paraphrase_into_match_but_never_touches_numbers_or_types():
     fields = [
         {"key": "description", "label": "Описание", "type": "textarea"},

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from urllib.parse import urlencode
 import httpx
 from websockets.asyncio.client import connect
 
+from . import stt, tts
 from .ari_client import AriClient, AriError
 from .audio import resolve_media
 from .config import Config
@@ -37,6 +39,8 @@ class CallState:
     playback_id: str | None = None
     rtt_samples: list[float] = field(default_factory=list)
     last_rtt_poll: float = 0.0
+    turn: int = 0
+    listening: bool = False
 
     def rtt_summary(self) -> dict:
         if not self.rtt_samples:
@@ -61,6 +65,7 @@ class CallState:
             "answered_at": self.answered_at,
             "finished_at": self.finished_at,
             "hangup_cause": self.hangup_cause,
+            "voice_turns": self.turn,
             **self.rtt_summary(),
         }
 
@@ -136,17 +141,32 @@ class CallSupervisor:
         registry: CallRegistry,
         pool: OperatorPool,
         notifier: Notifier,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.ari = ari
         self.registry = registry
         self.pool = pool
         self.notifier = notifier
         self.connected = False
+        self._transport = transport
+        self._background: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> None:
+        """Фоновая задача (обработка реплики): не блокирует цикл событий ARI
+        и не теряется в GC, пока выполняется."""
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     # -- события ARI ---------------------------------------------------------
 
     async def handle_event(self, event: dict) -> None:
         kind = event.get("type")
+
+        if kind in {"RecordingFinished", "RecordingFailed"}:
+            await self._on_recording(kind, event.get("recording") or {})
+            return
+
         channel_id = (event.get("channel") or {}).get("id")
         state = self.registry.get(channel_id) if channel_id else None
         if state is None:
@@ -158,7 +178,7 @@ class CallSupervisor:
             cause = event.get("cause_txt") or event.get("cause")
             await self.finish(state, cause=str(cause) if cause is not None else None)
         elif kind == "PlaybackFinished":
-            logger.info("Звонок %s: запись воспроизведена", state.call_id)
+            await self._playback_finished(state, event)
 
     async def _answered(self, state: CallState) -> None:
         if state.status != "ringing":
@@ -174,10 +194,122 @@ class CallSupervisor:
                 )
             except AriError as exc:
                 logger.warning("Не удалось запустить запись %s: %s", media, exc)
+                await self._start_listening(state)
         else:
             logger.info("Звонок %s идет без звука (записи нет)", state.call_id)
+            await self._start_listening(state)
 
         await self.notifier.send(self._payload("answered", state))
+
+    async def _playback_finished(self, state: CallState, event: dict) -> None:
+        logger.info("Звонок %s: запись воспроизведена", state.call_id)
+        playback_id = (event.get("playback") or {}).get("id")
+        # слушаем следующую реплику оператора только после того, как
+        # доиграла именно та реплика заявителя, что мы сами запустили
+        # (приветствие или ответ ИИ) - а не случайное чужое событие
+        if playback_id and playback_id == state.playback_id:
+            await self._start_listening(state)
+
+    # -- голосовой диалог: запись реплики -> STT -> ИИ -> TTS -> playback ----
+
+    async def _start_listening(self, state: CallState) -> None:
+        if not Config.VOICE_DIALOG_ENABLED or state.status != "answered":
+            return
+        if state.turn >= Config.VOICE_DIALOG_MAX_TURNS:
+            logger.info(
+                "Звонок %s: лимит реплик диалога исчерпан (%s), дальше без ИИ",
+                state.call_id,
+                state.turn,
+            )
+            return
+        name = f"turn-{state.call_id}-{state.turn}"
+        try:
+            await asyncio.to_thread(
+                self.ari.record,
+                state.call_id,
+                name,
+                max_duration_sec=Config.VOICE_MAX_UTTERANCE_SEC,
+                max_silence_sec=Config.VOICE_MAX_SILENCE_SEC,
+                fmt=Config.RECORDING_FORMAT,
+            )
+            state.listening = True
+        except AriError as exc:
+            logger.warning(
+                "Не удалось начать запись реплики (звонок %s): %s", state.call_id, exc
+            )
+
+    async def _on_recording(self, kind: str, recording: dict) -> None:
+        name = recording.get("name") or ""
+        target = recording.get("target_uri") or ""
+        if not target.startswith("channel:"):
+            return
+        state = self.registry.get(target.split(":", 1)[1])
+        if state is None:
+            return
+        state.listening = False
+        if kind == "RecordingFailed":
+            logger.warning(
+                "Запись реплики %s не удалась (звонок %s)", name, state.call_id
+            )
+            if state.status == "answered":
+                await self._start_listening(state)
+            return
+        self._spawn(self._process_turn(state, name))
+
+    async def _process_turn(self, state: CallState, recording_name: str) -> None:
+        path = os.path.join(
+            Config.RECORDING_DIR, f"{recording_name}.{Config.RECORDING_FORMAT}"
+        )
+        text = await asyncio.to_thread(stt.transcribe, path)
+        if not text:
+            # тишина или STT недоступен: пробуем еще раз, не тратя реплику ИИ
+            if state.status == "answered":
+                await self._start_listening(state)
+            return
+
+        reply = await asyncio.to_thread(self._voice_turn_request, state.call_id, text)
+        state.turn += 1
+        if not reply or state.status != "answered":
+            if state.status == "answered":
+                await self._start_listening(state)
+            return
+
+        media = await asyncio.to_thread(tts.synthesize, reply)
+        if not media:
+            await self._start_listening(state)
+            return
+        try:
+            state.playback_id = await asyncio.to_thread(
+                self.ari.play, state.call_id, media
+            )
+        except AriError as exc:
+            logger.warning(
+                "Не удалось озвучить ответ (звонок %s): %s", state.call_id, exc
+            )
+            await self._start_listening(state)
+
+    def _voice_turn_request(self, call_id: str, text: str) -> str | None:
+        """Синхронный запрос к arm_api за репликой заявителя (выполняется в
+        отдельном потоке - httpx.Client там безопаснее async-клиента)."""
+        url = f"{Config.ARM_API_URL}/internal/calls/{call_id}/voice-turn"
+        headers = {"X-Service-Token": Config.SERVICE_TOKEN}
+        try:
+            with httpx.Client(
+                timeout=Config.ARM_API_TIMEOUT_SEC,
+                transport=self._transport,
+            ) as client:
+                response = client.post(url, json={"text": text}, headers=headers)
+            if response.status_code >= 400:
+                logger.warning(
+                    "arm_api отклонил voice-turn (%s): %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                return None
+            return (response.json().get("reply") or "").strip() or None
+        except httpx.HTTPError as exc:
+            logger.warning("arm_api недоступен для voice-turn: %s", exc)
+            return None
 
     async def finish(self, state: CallState, cause: str | None = None) -> None:
         if state.status not in ACTIVE:

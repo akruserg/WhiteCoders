@@ -63,6 +63,25 @@ class Config:
     AUDIO_SOUND_PREFIX = os.environ.get("AUDIO_SOUND_PREFIX", "arm112")
     GENERATED_DIR = os.environ.get("GENERATED_DIR", "/generated")
 
+    # голосовой диалог: живой звонок оператора с ИИ-заявителем
+    # (речь оператора -> распознавание -> нейросеть -> синтез -> назад в VoIP)
+    VOICE_DIALOG_ENABLED = _bool("VOICE_DIALOG_ENABLED", "0")
+    VOICE_BASE_URL = os.environ.get("VOICE_BASE_URL", "http://voice:8090").rstrip("/")
+    VOICE_SERVICE_TOKEN = os.environ.get("VOICE_SERVICE_TOKEN", "")
+    VOICE_TTS_TIMEOUT_SEC = _float("VOICE_TTS_TIMEOUT_SEC", 20)
+    VOICE_STT_TIMEOUT_SEC = _float("VOICE_STT_TIMEOUT_SEC", 20)
+    TTS_DEFAULT_VOICE = os.environ.get("TTS_DEFAULT_VOICE", "ru_RU-irina-medium")
+
+    # запись реплики оператора: каталог, куда Asterisk кладет файлы ARI record
+    RECORDING_DIR = os.environ.get("RECORDING_DIR", "/recordings")
+    RECORDING_FORMAT = os.environ.get("RECORDING_FORMAT", "wav")
+    # диалог обрывается после стольких реплик оператора (карточку можно
+    # дозаполнить и без диалога - это не блокирует занятие)
+    VOICE_DIALOG_MAX_TURNS = _int("VOICE_DIALOG_MAX_TURNS", 6)
+    # запись реплики оператора останавливается по паузе или по таймауту
+    VOICE_MAX_SILENCE_SEC = _int("VOICE_MAX_SILENCE_SEC", 2)
+    VOICE_MAX_UTTERANCE_SEC = _int("VOICE_MAX_UTTERANCE_SEC", 20)
+
     @classmethod
     def problems(cls) -> list[str]:
         """Что мешает запуску. Пустой список - конфигурация пригодна."""
@@ -77,4 +96,8 @@ class Config:
             found.append("VOIP_ENDPOINT_MODE должен быть webrtc или sip")
         if cls.VOIP_POOL_SIZE < 1:
             found.append("VOIP_POOL_SIZE должен быть не меньше 1")
+        if cls.VOICE_DIALOG_ENABLED and not cls.VOICE_SERVICE_TOKEN:
+            found.append(
+                "VOICE_SERVICE_TOKEN не задан (нужен для VOICE_DIALOG_ENABLED)"
+            )
         return found

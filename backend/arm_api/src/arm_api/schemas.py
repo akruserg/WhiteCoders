@@ -402,6 +402,12 @@ class CallMessageIn(Schema):
     text = Field("str", required=True, min_len=1, max_len=4000)
 
 
+class VoiceTurnIn(Schema):
+    """Реплика оператора, уже распознанная STT в arm_voip."""
+
+    text = Field("str", required=True, min_len=1, max_len=4000)
+
+
 class ExpertGradeIn(Schema):
     score = Field("float", required=True, min=0, max=100)
     comment = Field("str", default="", max_len=4000)

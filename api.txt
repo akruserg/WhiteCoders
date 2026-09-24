@@ -2,7 +2,7 @@ API-контракт АРМ-112 (учебное ПО подготовки опе
 Базовый префикс: /api/v1. Формат: JSON, ошибки: {"error": {"code", "message", "details"}, "request_id"}.
 Авторизация: заголовок Authorization: Bearer <access_token>, получение: POST /auth/login.
 Полная спецификация OpenAPI 3.1: GET /api/v1/openapi.json
-Всего маршрутов: 127
+Всего маршрутов: 128
 
 == Аутентификация ==
 POST    /api/v1/auth/consent   [Bearer JWT]
@@ -149,7 +149,8 @@ PATCH   /api/v1/workstations/{station_id}             [Bearer JWT]
 GET     /api/v1/workstations/{station_id}/config.xml  [Bearer JWT]
 
 == Служебные (arm_voip) ==
-POST    /api/v1/internal/voip/events  [без токена]
+POST    /api/v1/internal/voip/events               [X-Service-Token]
+POST    /api/v1/internal/calls/{sip_call_id}/voice-turn  [X-Service-Token]
 
 == Служебные ==
 GET     /api/v1/              [без токена]

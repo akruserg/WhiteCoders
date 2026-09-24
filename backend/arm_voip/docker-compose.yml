@@ -7,9 +7,12 @@ services:
     environment:
       GENERATED_DIR: /generated
       AUDIO_DIR: /audio
+      RECORDING_DIR: /recordings
+      VOICE_BASE_URL: http://voice:8090
     volumes:
       - asterisk_generated:/generated
       - voip_audio:/audio
+      - voip_recordings:/recordings:ro
     ports:
       - "127.0.0.1:8001:8001"
     depends_on:
@@ -38,6 +41,7 @@ services:
       - ./asterisk/docker-entrypoint.sh:/entrypoint/docker-entrypoint.sh:ro
       - asterisk_generated:/etc/asterisk/generated:ro
       - voip_audio:/var/lib/asterisk/sounds/arm112:ro
+      - voip_recordings:/var/spool/asterisk/recording
     ports:
       - "5060:5060/udp"
       - "10000-10100:10000-10100/udp"
@@ -47,3 +51,4 @@ services:
 volumes:
   asterisk_generated:
   voip_audio:
+  voip_recordings:

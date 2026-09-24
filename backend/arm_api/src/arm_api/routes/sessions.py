@@ -700,21 +700,11 @@ def send_message(attempt_id):
     if call is None:
         raise ApiError("Вызов не найден", 404)
 
-    turn = db.session.execute(
-        select(func.count(CallMessage.id)).where(
-            CallMessage.call_id == call.id, CallMessage.author == "operator"
-        )
-    ).scalar_one()
-    db.session.add(CallMessage(call_id=call.id, author="operator", text=payload.text))
     scenario = db.session.get(Scenario, attempt.scenario_id)
-    reply = integrations.caller_reply(
-        scenario.legend if scenario else {}, payload.text, turn
-    )
-    message = CallMessage(call_id=call.id, author="caller", text=reply)
-    db.session.add(message)
+    reply = integrations.record_dialog_turn(call, scenario, payload.text)
     commit()
     return ok(
-        {"reply": message.to_dict(), "messages": [m.to_dict() for m in call.messages]},
+        {"reply": reply.to_dict(), "messages": [m.to_dict() for m in call.messages]},
         201,
     )
 

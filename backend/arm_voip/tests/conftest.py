@@ -26,9 +26,12 @@ class FakeAri:
         self.started = []
         self.hangups = []
         self.played = []
+        self.recorded = []
+        self.cancelled_recordings = []
         self.rtt = None
         self.alive = True
         self.fail_start = False
+        self.fail_record = False
 
     def start_call(self, *, attempt_id, destination, audio=None, caller_number=None):
         if self.fail_start:
@@ -46,6 +49,26 @@ class FakeAri:
     def play(self, channel_id, media):
         self.played.append((channel_id, media))
         return "pb1"
+
+    def record(
+        self,
+        channel_id,
+        name,
+        *,
+        max_duration_sec,
+        max_silence_sec,
+        fmt="wav",
+        beep=True,
+    ):
+        if self.fail_record:
+            from arm_voip.ari_client import AriError
+
+            raise AriError("ARI отклонил запись (500): boom")
+        self.recorded.append((channel_id, name))
+        return name
+
+    def cancel_recording(self, name):
+        self.cancelled_recordings.append(name)
 
     def channel_exists(self, channel_id):
         return self.alive
