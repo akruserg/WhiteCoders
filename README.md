@@ -9,8 +9,8 @@
 - **Доска задач:** https://t.me/c/4363884787/2
 - **Дизайн (Figma):** https://www.figma.com/design/WFHNbYBu5rjj46low0UtC6/Untitled?node-id=0-1&t=Ip3DS5hGRet4Og2O-1
 - **API-контракт:** [`api.txt`](./api.txt)
-- **Презентация:** _https://t.me/c/4363884787/3_
-- **Сопроводительная документация:** _https://t.me/c/4363884787/3_
+- **Презентация:** [`docs/ARM-112_Presentation.pptx`](./docs/ARM-112_Presentation.pptx)
+- **Сопроводительная документация:** [`docs/ARM-112_Documentation.docx`](./docs/ARM-112_Documentation.docx)
 
 ## Команда и зоны ответственности
 
