@@ -1,0 +1,157 @@
+API-контракт АРМ-112 (учебное ПО подготовки операторов ДДС)
+Базовый префикс: /api/v1. Формат: JSON, ошибки: {"error": {"code", "message", "details"}, "request_id"}.
+Авторизация: заголовок Authorization: Bearer <access_token>, получение: POST /auth/login.
+Полная спецификация OpenAPI 3.1: GET /api/v1/openapi.json
+Всего маршрутов: 128
+
+== Аутентификация ==
+POST    /api/v1/auth/consent   [Bearer JWT]
+POST    /api/v1/auth/login     [без токена]
+POST    /api/v1/auth/logout    [без токена]
+GET     /api/v1/auth/me        [Bearer JWT]
+POST    /api/v1/auth/mfa       [без токена]
+POST    /api/v1/auth/password  [Bearer JWT]
+POST    /api/v1/auth/refresh   [без токена]
+
+== Пользователи, роли, группы ==
+GET     /api/v1/groups                               [Bearer JWT]
+POST    /api/v1/groups                               [Bearer JWT]
+DELETE  /api/v1/groups/{group_id}                    [Bearer JWT]
+GET     /api/v1/groups/{group_id}                    [Bearer JWT]
+PATCH   /api/v1/groups/{group_id}                    [Bearer JWT]
+POST    /api/v1/groups/{group_id}/members            [Bearer JWT]
+DELETE  /api/v1/groups/{group_id}/members/{user_id}  [Bearer JWT]
+GET     /api/v1/permissions                          [Bearer JWT]
+GET     /api/v1/roles                                [Bearer JWT]
+GET     /api/v1/roles/matrix                         [Bearer JWT]
+PUT     /api/v1/roles/{code}/permissions             [Bearer JWT]
+POST    /api/v1/roles/{code}/permissions/reset       [Bearer JWT]
+GET     /api/v1/users                                [Bearer JWT]
+POST    /api/v1/users                                [Bearer JWT]
+GET     /api/v1/users/{user_id}                      [Bearer JWT]
+PATCH   /api/v1/users/{user_id}                      [Bearer JWT]
+POST    /api/v1/users/{user_id}/anonymize            [Bearer JWT]
+POST    /api/v1/users/{user_id}/block                [Bearer JWT]
+POST    /api/v1/users/{user_id}/reset-password       [Bearer JWT]
+POST    /api/v1/users/{user_id}/unblock              [Bearer JWT]
+
+== Справочники: категории, шаблоны карточки, профили оценивания ==
+GET     /api/v1/card-templates                 [Bearer JWT]
+POST    /api/v1/card-templates                 [Bearer JWT]
+GET     /api/v1/card-templates/{template_id}   [Bearer JWT]
+GET     /api/v1/categories                     [Bearer JWT]
+POST    /api/v1/categories                     [Bearer JWT]
+PATCH   /api/v1/categories/{category_id}       [Bearer JWT]
+GET     /api/v1/grading-profiles               [Bearer JWT]
+POST    /api/v1/grading-profiles               [Bearer JWT]
+PATCH   /api/v1/grading-profiles/{profile_id}  [Bearer JWT]
+
+== Учебные сценарии ==
+GET     /api/v1/scenarios                              [Bearer JWT]
+POST    /api/v1/scenarios                              [Bearer JWT]
+GET     /api/v1/scenarios/export                       [Bearer JWT]
+POST    /api/v1/scenarios/generate                     [Bearer JWT]
+POST    /api/v1/scenarios/import                       [Bearer JWT]
+DELETE  /api/v1/scenarios/{scenario_id}                [Bearer JWT]
+GET     /api/v1/scenarios/{scenario_id}                [Bearer JWT]
+PATCH   /api/v1/scenarios/{scenario_id}                [Bearer JWT]
+POST    /api/v1/scenarios/{scenario_id}/corrections    [Bearer JWT]
+POST    /api/v1/scenarios/{scenario_id}/grammar-check  [Bearer JWT]
+POST    /api/v1/scenarios/{scenario_id}/validate       [Bearer JWT]
+
+== Методические материалы ==
+GET     /api/v1/materials                         [Bearer JWT]
+POST    /api/v1/materials                         [Bearer JWT]
+GET     /api/v1/materials/search                  [Bearer JWT]
+DELETE  /api/v1/materials/{material_id}           [Bearer JWT]
+GET     /api/v1/materials/{material_id}/download  [Bearer JWT]
+POST    /api/v1/materials/{material_id}/index     [Bearer JWT]
+
+== Занятия, карточки, звонки ==
+GET     /api/v1/attempts/{attempt_id}                         [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/answer                  [Bearer JWT]
+PUT     /api/v1/attempts/{attempt_id}/draft                   [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/grade                   [Bearer JWT]
+GET     /api/v1/attempts/{attempt_id}/messages                [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/messages                [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/scenario                [Bearer JWT]
+POST    /api/v1/attempts/{attempt_id}/submit                  [Bearer JWT]
+GET     /api/v1/sessions                                      [Bearer JWT]
+POST    /api/v1/sessions                                      [Bearer JWT]
+GET     /api/v1/sessions/{session_id}                         [Bearer JWT]
+PATCH   /api/v1/sessions/{session_id}                         [Bearer JWT]
+GET     /api/v1/sessions/{session_id}/attempts                [Bearer JWT]
+POST    /api/v1/sessions/{session_id}/attempts/next           [Bearer JWT]
+GET     /api/v1/sessions/{session_id}/attestation             [Bearer JWT]
+POST    /api/v1/sessions/{session_id}/finish                  [Bearer JWT]
+GET     /api/v1/sessions/{session_id}/monitor                 [Bearer JWT]
+POST    /api/v1/sessions/{session_id}/participants            [Bearer JWT]
+DELETE  /api/v1/sessions/{session_id}/participants/{user_id}  [Bearer JWT]
+POST    /api/v1/sessions/{session_id}/start                   [Bearer JWT]
+
+== Прогресс и аналитика ==
+GET     /api/v1/analytics/forecast-accuracy    [Bearer JWT]
+GET     /api/v1/analytics/heatmap              [Bearer JWT]
+GET     /api/v1/analytics/overview             [Bearer JWT]
+GET     /api/v1/me/attempts                    [Bearer JWT]
+GET     /api/v1/me/progress                    [Bearer JWT]
+GET     /api/v1/me/recommendations             [Bearer JWT]
+GET     /api/v1/sessions/{session_id}/results  [Bearer JWT]
+GET     /api/v1/users/{user_id}/progress       [Bearer JWT]
+
+== Отчеты, инсайты, сертификаты ==
+GET     /api/v1/certificates                            [Bearer JWT]
+POST    /api/v1/certificates                            [Bearer JWT]
+GET     /api/v1/certificates/{certificate_id}/download  [Bearer JWT]
+GET     /api/v1/insights                                [Bearer JWT]
+POST    /api/v1/insights/generate                       [Bearer JWT]
+POST    /api/v1/insights/{insight_id}/publish           [Bearer JWT]
+GET     /api/v1/reports                                 [Bearer JWT]
+POST    /api/v1/reports                                 [Bearer JWT]
+GET     /api/v1/reports/formats                         [Bearer JWT]
+GET     /api/v1/reports/{report_id}                     [Bearer JWT]
+GET     /api/v1/reports/{report_id}/download            [Bearer JWT]
+GET     /api/v1/sessions/{session_id}/report            [Bearer JWT]
+
+== Администрирование ==
+GET     /api/v1/system/alerts                       [Bearer JWT]
+POST    /api/v1/system/alerts/{alert_id}/ack        [Bearer JWT]
+POST    /api/v1/system/alerts/{alert_id}/resolve    [Bearer JWT]
+GET     /api/v1/system/audit                        [Bearer JWT]
+GET     /api/v1/system/audit/verify                 [Bearer JWT]
+GET     /api/v1/system/backups                      [Bearer JWT]
+POST    /api/v1/system/backups                      [Bearer JWT]
+GET     /api/v1/system/events                       [Bearer JWT]
+GET     /api/v1/system/health                       [Bearer JWT]
+GET     /api/v1/system/metrics                      [Bearer JWT]
+POST    /api/v1/system/notify/test                  [Bearer JWT]
+GET     /api/v1/system/services                     [Bearer JWT]
+POST    /api/v1/system/services/{service}/{action}  [Bearer JWT]
+GET     /api/v1/system/settings                     [Bearer JWT]
+GET     /api/v1/system/settings/export.xml          [Bearer JWT]
+POST    /api/v1/system/settings/import              [Bearer JWT]
+PUT     /api/v1/system/settings/{key}               [Bearer JWT]
+GET     /api/v1/system/voip                         [Bearer JWT]
+
+== Пакетное обновление контента и настроек ==
+GET     /api/v1/system/updates  [Bearer JWT]
+POST    /api/v1/system/updates  [Bearer JWT]
+
+== Рабочие места (АРМ) и XML-конфигурации ==
+GET     /api/v1/me/workstation                        [Bearer JWT]
+GET     /api/v1/workstations                          [Bearer JWT]
+POST    /api/v1/workstations                          [Bearer JWT]
+GET     /api/v1/workstations/export.xml               [Bearer JWT]
+POST    /api/v1/workstations/import                   [Bearer JWT]
+DELETE  /api/v1/workstations/{station_id}             [Bearer JWT]
+GET     /api/v1/workstations/{station_id}             [Bearer JWT]
+PATCH   /api/v1/workstations/{station_id}             [Bearer JWT]
+GET     /api/v1/workstations/{station_id}/config.xml  [Bearer JWT]
+
+== Служебные (arm_voip) ==
+POST    /api/v1/internal/voip/events               [X-Service-Token]
+POST    /api/v1/internal/calls/{sip_call_id}/voice-turn  [X-Service-Token]
+
+== Служебные ==
+GET     /api/v1/              [без токена]
+GET     /api/v1/openapi.json  [без токена]

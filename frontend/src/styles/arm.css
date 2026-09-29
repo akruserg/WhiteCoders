@@ -1,0 +1,51 @@
+/* АРМ-112: серая рабочая область, оранжевая панель служб (макеты 01-16) */
+.arm { min-height: 100%; background: #c9ced1; display: flex; flex-direction: column; height: 100%; }
+.arm-head { display: flex; background: #ececec; min-height: 75px; flex: none; }
+.arm-head > div:first-child { padding: 12px 24px; }
+.arm-head h1 { font-size: 26px; font-weight: 400; } .arm-head small { color: var(--c-muted); font-size: 12px; }
+.arm-exit { align-self: center; margin-right: 20px; font-size: 13px; color: var(--c-ink-2); }
+.arm-journal { flex: 1; overflow: auto; background: #7f8b92; padding: 22px 26px; color: #fff; }
+.arm-journal.dim { filter: brightness(.55); pointer-events: none; }
+.arm-journal h2 { font-size: 18px; font-weight: 500; }
+.jempty { background: #2b3237; padding: 22px; font-size: 13px; color: #cfd5d9; }
+.jtable { width: 100%; font-size: 12px; } .jtable th { text-align: left; font-weight: 400; font-size: 10px; color: #dfe4e7; padding: 6px 10px; }
+.jtable td { background: #2b3237; padding: 12px 10px; border-bottom: 3px solid #7f8b92; }
+.jstatus { padding: 2px 8px; border-radius: 3px; font-size: 11px; background: #4a5157; }
+.jstatus.evaluated { background: #2f7a49; } .jstatus.in_progress { background: #1c7cc0; } .jstatus.expired { background: #a3231f; } .jstatus.issued { background: var(--c-accent); }
+.jbtn { background: transparent; border: 1px solid #aeb6bb; color: #fff; padding: 3px 10px; cursor: pointer; font-size: 11px; }
+.ring { width: 64px; height: 64px; border-radius: 50%; background: #d6eedd; color: var(--c-green); display: inline-flex; align-items: center; justify-content: center; font-size: 30px; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 12px rgba(62,155,95,.18); } }
+
+.arm-card { display: flex; flex-direction: column; height: 100%; }
+.arm-top { display: flex; gap: 6px; padding: 6px; background: #c9ced1; flex: none; }
+.arm-top > * { background: #efefef; }
+.arm-hangup { padding: 8px 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; }
+.arm-hangup button { background: none; border: 0; font-size: 22px; color: var(--c-red); cursor: pointer; transform: rotate(135deg); }
+.arm-phone { flex: 1; padding: 6px 12px; display: flex; flex-direction: column; } .arm-phone small { font-size: 10px; color: var(--c-blue); }
+.arm-phone input { border: 0; border-bottom: 1px solid var(--c-blue); background: transparent; font-size: 20px; padding: 2px 0; outline: none; }
+.arm-incident { padding: 8px 14px; min-width: 210px; display: flex; flex-direction: column; justify-content: center; } .arm-incident b { font-size: 16px; } .arm-incident small { color: var(--c-muted); font-size: 11px; }
+.arm-timer { background: var(--c-dark) !important; color: #fff; padding: 6px 18px; display: flex; flex-direction: column; justify-content: center; text-align: center; min-width: 130px; }
+.arm-timer span { font-size: 34px; font-weight: 500; line-height: 1; } .arm-timer small { font-size: 9px; color: #cfd5d9; margin-top: 3px; }
+.arm-timer.over { background: var(--c-red) !important; }
+.arm-body { flex: 1; display: grid; grid-template-columns: 1fr 1.25fr; gap: 6px; padding: 0 6px; min-height: 0; overflow: auto; }
+.arm-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.arm-box { background: #efefef; padding: 12px 14px; } .arm-box.grow { flex: 1; }
+.arm-h { font-size: 12px; font-weight: 500; margin-bottom: 8px; }
+.afield { display: flex; flex-direction: column; gap: 2px; } .afield small { font-size: 10px; color: var(--c-muted); }
+.afield input, .afield textarea { border: 0; border-bottom: 1px solid var(--c-line-2); background: transparent; padding: 5px 0; outline: none; font-size: 14px; resize: vertical; }
+.afield input:focus, .afield textarea:focus { border-bottom-color: var(--c-blue); }
+.afield input.big { font-size: 20px; }
+.addr { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; } .addr .wide { grid-column: span 2; }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { background: #fff; border: 1px solid var(--c-line-2); padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 2px; }
+.chip:hover { background: #f3f3f3; } .chip.on { background: var(--c-blue); color: #fff; border-color: var(--c-blue); }
+.arm-desc { background: #efefef; padding: 10px 14px; margin: 6px; flex: none; }
+.arm-services { display: flex; align-items: center; gap: 12px; background: var(--c-accent); padding: 10px 14px; color: #fff; flex: none; }
+.arm-services .plus { width: 34px; height: 34px; border: 1px solid #fff; background: transparent; color: #fff; font-size: 22px; cursor: pointer; }
+.svc-list { display: flex; gap: 6px; flex-wrap: wrap; } .svc { background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.6); color: #fff; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+.arm-services .save { background: transparent; border: 2px solid #fff; color: #fff; font-size: 18px; font-weight: 500; padding: 6px 26px; cursor: pointer; }
+.arm-services .save:hover:not(:disabled) { background: #fff; color: var(--c-accent); } .arm-services .save:disabled { opacity: .6; }
+.dialog .msgs { height: 150px; overflow: auto; background: #fff; padding: 8px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.msg { max-width: 82%; padding: 7px 10px; font-size: 13px; border-radius: 10px; } .msg.caller { background: #e0e3e5; align-self: flex-start; } .msg.operator { background: var(--c-blue); color: #fff; align-self: flex-end; }
+.arm-result { padding: 30px 26px; overflow: auto; }
+@media (max-width: 1000px) { .arm-body { grid-template-columns: 1fr; } .arm-top { flex-wrap: wrap; } .addr { grid-template-columns: repeat(2, 1fr); } }

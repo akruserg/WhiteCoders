@@ -1,0 +1,25 @@
+# ИИ-модуль: YandexGPT-5-Lite-8B-instruct (GGUF) на сервере llama.cpp.
+# Запуск: docker compose --profile ai up -d   (модель: ./llm/download_model.sh)
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: arm_llm
+    profiles: ["ai"]
+    command:
+      - "-m"
+      - "/models/YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf"
+      - "-c"
+      - "16384"        # контекст на все слоты, при -np 2 по 8192 на запрос
+      - "-np"
+      - "2"
+      - "-t"
+      - "${LLM_THREADS:-8}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+    volumes:
+      - ./models:/models:ro
+    expose:
+      - "8080"
+    restart: unless-stopped

@@ -1,0 +1,24 @@
+# Голосовой модуль: синтез речи заявителя (Piper) и распознавание речи
+# оператора (faster-whisper). Отдельный образ (python:3.12), т.к. на 2026 год
+# onnxruntime/ctranslate2 надежнее всего собраны именно под 3.12, тогда как
+# arm_api/arm_voip уже на python:3.14 - изоляция рантайма по примеру llm/.
+#
+# Запуск: docker compose --profile ai up -d   (модели: ./voice/download_models.sh)
+services:
+  voice:
+    build: ./voice
+    container_name: arm_voice
+    profiles: ["ai"]
+    env_file:
+      - ./voice/.env
+    volumes:
+      - ./voice/models:/models:ro
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
